@@ -33,13 +33,20 @@ mymap           8.2k   $1.40    $1.20   46%    4.1% ⚠     openrouter 60%
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL,INGEST_KEY,DASHBOARD_PASSWORD)
 
-1. **Get a database.** Two ways:
-   - **Zero-friction ([db9](https://db9.ai)):** provisions a database, creates the table, and writes `DATABASE_URL` into `.env.local` for you:
-     ```bash
-     npm i get-db9
-     npm run db:provision:db9     # one command → ready for `npm run dev`
-     ```
-   - **Bring your own Postgres** (Neon, Supabase, RDS, …): set `DATABASE_URL` and run `npm run db:init`.
+1. **Point it at a Postgres (default).** Set `DATABASE_URL` to any Postgres you already have — Neon, Supabase, RDS, a local one — then create the table:
+   ```bash
+   # DATABASE_URL=postgres://…   (in .env.local, or your host's env)
+   npm run db:init
+   ```
+   <details>
+   <summary>Don't have a database handy? Optional <a href="https://db9.ai">db9</a> shortcut.</summary>
+
+   db9 is plain Postgres with instant provisioning. This optional helper provisions one, creates the table, and writes `DATABASE_URL` into `.env.local` for you — nothing in the app depends on db9, it just fills the same `DATABASE_URL`:
+   ```bash
+   npm i get-db9
+   npm run db:provision:db9
+   ```
+   </details>
 
 2. **Deploy** (Vercel button above, or `npm run build && npm start`). Set the env vars below.
 

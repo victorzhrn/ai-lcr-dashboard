@@ -7,6 +7,7 @@
 // Prints a DATABASE_URL line to paste into your env. db9 is plain Postgres, so
 // the app then talks to it through the same driver as any other Postgres.
 import { Pool } from "pg";
+import { existsSync, readFileSync, appendFileSync } from "node:fs";
 
 let getDb9;
 try {
@@ -54,7 +55,17 @@ try {
     CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
   `);
   console.log("✓ db9 database provisioned + lcr_calls table ready");
-  console.log("→ set the DATABASE_URL above in your env (and on Vercel).");
+
+  // Convenience: drop it straight into .env.local for local dev (no copy-paste).
+  const envFile = ".env.local";
+  const already = existsSync(envFile) && /^DATABASE_URL=.+/m.test(readFileSync(envFile, "utf8"));
+  if (already) {
+    console.log("→ .env.local already has DATABASE_URL — left as-is.");
+  } else {
+    appendFileSync(envFile, `DATABASE_URL=${url}\n`);
+    console.log("→ wrote DATABASE_URL to .env.local — `npm run dev` is ready.");
+  }
+  console.log("→ for deploys, set the DATABASE_URL above on your host (e.g. Vercel).");
 } finally {
   await pool.end();
 }

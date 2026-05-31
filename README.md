@@ -33,12 +33,13 @@ mymap           8.2k   $1.40    $1.20   46%    4.1% ⚠     openrouter 60%
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL,INGEST_KEY,DASHBOARD_PASSWORD)
 
-1. **Get a database.** Any Postgres works. The zero-friction option is [db9](https://db9.ai) — provision one in seconds:
-   ```bash
-   npm i get-db9
-   npm run db:provision:db9     # prints a DATABASE_URL + creates the table
-   ```
-   Already have a Postgres? Set `DATABASE_URL` and run `npm run db:init`.
+1. **Get a database.** Two ways:
+   - **Zero-friction ([db9](https://db9.ai)):** provisions a database, creates the table, and writes `DATABASE_URL` into `.env.local` for you:
+     ```bash
+     npm i get-db9
+     npm run db:provision:db9     # one command → ready for `npm run dev`
+     ```
+   - **Bring your own Postgres** (Neon, Supabase, RDS, …): set `DATABASE_URL` and run `npm run db:init`.
 
 2. **Deploy** (Vercel button above, or `npm run build && npm start`). Set the env vars below.
 

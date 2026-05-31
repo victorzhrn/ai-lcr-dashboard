@@ -9,6 +9,16 @@ declare global {
   var __lcrPool: Pool | undefined;
 }
 
+// Hosted Postgres (Neon/Supabase/db9) needs TLS; a local/internal one usually
+// has none and errors if we force ssl. Skip ssl for localhost; relax CA checks
+// otherwise. Override with PGSSLMODE=disable / require if you need to.
+function sslFor(url: string): false | { rejectUnauthorized: boolean } {
+  if (process.env.PGSSLMODE === "disable") return false;
+  if (process.env.PGSSLMODE === "require") return { rejectUnauthorized: false };
+  const isLocal = /@(localhost|127\.0\.0\.1|\[::1\])(:\d+)?\//.test(url) || url.includes("@/");
+  return isLocal ? false : { rejectUnauthorized: false };
+}
+
 export function getPool(): Pool {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
@@ -17,8 +27,7 @@ export function getPool(): Pool {
   if (!globalThis.__lcrPool) {
     globalThis.__lcrPool = new Pool({
       connectionString,
-      // db9 and most hosted Postgres use TLS without a locally-trusted CA.
-      ssl: { rejectUnauthorized: false },
+      ssl: sslFor(connectionString),
       max: 3,
       idleTimeoutMillis: 10_000,
     });

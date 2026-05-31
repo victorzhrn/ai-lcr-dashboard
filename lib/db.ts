@@ -35,6 +35,23 @@ export function getPool(): Pool {
   return globalThis.__lcrPool;
 }
 
+// Ensure the table exists — runs once per process (memoized), so a fresh deploy
+// just needs DATABASE_URL: the schema is created on the first ingest, no manual
+// migration step. CREATE TABLE IF NOT EXISTS is idempotent and cheap.
+let schemaReady: Promise<void> | undefined;
+export function ensureSchema(): Promise<void> {
+  if (!schemaReady) {
+    schemaReady = getPool()
+      .query(SCHEMA_SQL)
+      .then(() => undefined)
+      .catch((e) => {
+        schemaReady = undefined; // let the next request retry
+        throw e;
+      });
+  }
+  return schemaReady;
+}
+
 // One table, no content — metadata only. Idempotent; safe to run repeatedly.
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS lcr_calls (

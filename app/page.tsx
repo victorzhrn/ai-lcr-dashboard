@@ -13,6 +13,7 @@ import {
   type FleetRow,
   type Metrics,
 } from "@/lib/queries";
+import { ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -298,6 +299,7 @@ export default async function Page({
   let projects: string[] = [];
 
   try {
+    await ensureSchema(); // fresh deploy: create the table so we show "no calls yet", not a DB error
     const fleet = await getFleet(win);
     projects = fleet.map((f) => f.project);
     const metrics = await getMetrics(project, win);

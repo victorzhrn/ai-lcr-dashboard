@@ -29,42 +29,43 @@ mymap           8.2k   $1.40    $1.20   46%    4.1% ⚠     openrouter 60%
 ✗ diagram  tokenmart→openrouter→deepseek   1.2s   FAILED   ⤷ 502, 429, 401
 ```
 
-## Quick start
+## Deploy
+
+It's a small Next.js + Postgres app — deploy anywhere Next runs. Vercel is one click:
 
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL,INGEST_KEY,DASHBOARD_PASSWORD)
 
-1. **Point it at a Postgres (default).** Set `DATABASE_URL` to any Postgres you already have — Neon, Supabase, RDS, a local one — then create the table:
-   ```bash
-   # DATABASE_URL=postgres://…   (in .env.local, or your host's env)
-   npm run db:init
-   ```
-   <details>
-   <summary>Don't have a database handy? Optional <a href="https://db9.ai">db9</a> shortcut.</summary>
+1. **Create the project** — click the button above (or import the repo in Vercel, or `npm run build && npm start` on any host).
+2. **Attach a Postgres → set `DATABASE_URL`.** Any Postgres works: [Neon](https://neon.tech), [Supabase](https://supabase.com), RDS, your own, or a [db9](https://db9.ai) instant database. Put the connection string in the project's `DATABASE_URL` env var.
+   - No database yet? Fastest path: `npm i get-db9 && npm run db:provision:db9` provisions a db9 one and prints the `DATABASE_URL` to paste in.
+3. **Set the doors (optional but recommended for a public URL):**
+   - `INGEST_KEY` — require `Authorization: Bearer <key>` to write (`POST /api/ingest`).
+   - `DASHBOARD_PASSWORD` — HTTP Basic to view the dashboard (any username + this password).
+4. **That's it — the table auto-creates** on the first request (ingest or page load). No migration step.
+5. **Point your apps at it** (next section).
 
-   db9 is plain Postgres with instant provisioning. This optional helper provisions one, creates the table, and writes `DATABASE_URL` into `.env.local` for you — nothing in the app depends on db9, it just fills the same `DATABASE_URL`:
-   ```bash
-   npm i get-db9
-   npm run db:provision:db9
-   ```
-   </details>
+> **Local dev:** `cp .env.example .env.local`, set `DATABASE_URL`, `npm run dev`. (`npm run db:init` creates the table eagerly if you want; otherwise it's created on first use.)
 
-2. **Deploy** (Vercel button above, or `npm run build && npm start`). Set the env vars below.
+## Send it data
 
-3. **Point ai-lcr at it** from each app, using the built-in sink:
-   ```ts
-   import { createLCR, createHttpSink } from "ai-lcr";
-   import { after } from "next/server"; // serverless: don't block the response
+From each app, wire ai-lcr's `onCall` to this dashboard with the built-in sink:
 
-   const lcr = createLCR({
-     models: { /* … */ },
-     onCall: createHttpSink({
-       url: `${process.env.LCR_INGEST_URL}/api/ingest`,
-       headers: { authorization: `Bearer ${process.env.LCR_INGEST_KEY}` },
-       project: process.env.LCR_PROJECT,  // tag per app — becomes a row in the fleet table
-       dispatch: after,
-     }),
-   });
-   ```
+```ts
+import { createLCR, createHttpSink } from "ai-lcr";
+import { after } from "next/server"; // serverless: don't block the response
+
+const lcr = createLCR({
+  models: { /* … */ },
+  onCall: createHttpSink({
+    url: `${process.env.LCR_INGEST_URL}/api/ingest`,   // this dashboard's origin
+    headers: { authorization: `Bearer ${process.env.LCR_INGEST_KEY}` }, // = the dashboard's INGEST_KEY
+    project: process.env.LCR_PROJECT,  // tag per app → one row per project in the fleet view
+    dispatch: after,
+  }),
+});
+```
+
+Each app sets `LCR_INGEST_URL` (this deploy's URL), `LCR_INGEST_KEY` (matches the dashboard's `INGEST_KEY`), and `LCR_PROJECT` (the project name). Open the dashboard and the project shows up.
 
 ## Environment
 

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { getPool } from "@/lib/db";
+import { getPool, ensureSchema } from "@/lib/db";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -61,6 +61,7 @@ export async function POST(req: Request) {
 
   const r = body;
   try {
+    await ensureSchema(); // first-deploy: create the table on demand, no manual migration
     const pool = getPool();
     await pool.query(
       `INSERT INTO lcr_calls

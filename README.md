@@ -2,7 +2,7 @@
 
 A **self-hostable** dashboard for [ai-lcr](https://github.com/victorzhrn/ai-lcr) — see your LLM requests, **how much least-cost routing saved you**, and **whether your failovers are actually working**, across every provider you route to.
 
-You run your own instance, so there's **no multi-tenant auth and the data never leaves your infrastructure**. The records carry **metadata only** — no prompts, no responses.
+You run your own instance, so the data never leaves your infrastructure, and it's **open by default** — point an app at the URL and go, like Plausible. No login, no key required. The records carry **metadata only** (no prompts, no responses). Want it locked down? Set an optional key/password (see below) — security is opt-in, not in your way.
 
 > Why this and not a generic LLM observability tool? Generic tools log calls. This one is built around the two things ai-lcr is for: **savings vs baseline** and **failover health** — the cross-provider view no single provider's dashboard can give you.
 
@@ -33,16 +33,17 @@ mymap           8.2k   $1.40    $1.20   46%    4.1% ⚠     openrouter 60%
 
 It's a small Next.js + Postgres app — deploy anywhere Next runs. Vercel is one click:
 
-[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL,INGEST_KEY,DASHBOARD_PASSWORD)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL)
 
 1. **Create the project** — click the button above (or import the repo in Vercel, or `npm run build && npm start` on any host).
 2. **Attach a Postgres → set `DATABASE_URL`.** Any Postgres works: [Neon](https://neon.tech), [Supabase](https://supabase.com), RDS, your own, or a [db9](https://db9.ai) instant database. Put the connection string in the project's `DATABASE_URL` env var.
    - No database yet? Fastest path: `npm i get-db9 && npm run db:provision:db9` provisions a db9 one and prints the `DATABASE_URL` to paste in.
-3. **Set the doors (optional but recommended for a public URL):**
-   - `INGEST_KEY` — require `Authorization: Bearer <key>` to write (`POST /api/ingest`).
-   - `DASHBOARD_PASSWORD` — HTTP Basic to view the dashboard (any username + this password).
-4. **That's it — the table auto-creates** on the first request (ingest or page load). No migration step.
-5. **Point your apps at it** (next section).
+3. **That's it — the table auto-creates** on the first request (ingest or page load). No migration step, no auth to configure.
+4. **Point your apps at it** (next section).
+
+**Optional hardening** (off unless you set them — leave them unset for the open, Plausible-style default):
+- `INGEST_KEY` — if set, `POST /api/ingest` requires `Authorization: Bearer <key>` (locks who can write).
+- `DASHBOARD_PASSWORD` — if set, viewing the dashboard requires HTTP Basic auth (locks who can read).
 
 > **Local dev:** `cp .env.example .env.local`, set `DATABASE_URL`, `npm run dev`. (`npm run db:init` creates the table eagerly if you want; otherwise it's created on first use.)
 
@@ -57,15 +58,15 @@ import { after } from "next/server"; // serverless: don't block the response
 const lcr = createLCR({
   models: { /* … */ },
   onCall: createHttpSink({
-    url: `${process.env.LCR_INGEST_URL}/api/ingest`,   // this dashboard's origin
-    headers: { authorization: `Bearer ${process.env.LCR_INGEST_KEY}` }, // = the dashboard's INGEST_KEY
-    project: process.env.LCR_PROJECT,  // tag per app → one row per project in the fleet view
+    url: `${process.env.LCR_INGEST_URL}/api/ingest`,   // this dashboard's origin — the only thing you need
+    project: process.env.LCR_PROJECT,                  // tag per app → one row per project in the fleet view
     dispatch: after,
+    // headers: { authorization: `Bearer ${process.env.LCR_INGEST_KEY}` }, // only if you set INGEST_KEY
   }),
 });
 ```
 
-Each app sets `LCR_INGEST_URL` (this deploy's URL), `LCR_INGEST_KEY` (matches the dashboard's `INGEST_KEY`), and `LCR_PROJECT` (the project name). Open the dashboard and the project shows up.
+The only required env per app is `LCR_INGEST_URL` (this deploy's URL); `LCR_PROJECT` names the row. Add `LCR_INGEST_KEY` + the `headers` line **only if** you set `INGEST_KEY` on the dashboard. Open the dashboard and the project shows up.
 
 ## Environment
 

@@ -136,8 +136,19 @@ export interface FleetRow {
   savedUsd: number;
   savePct: number;
   failoverRate: number;
+  failRate: number; // share of calls where every provider failed (ok = false)
   topProvider: string;
   topProviderPct: number;
+}
+
+export type ProjectStatus = "ok" | "warn" | "down";
+
+// down: real failures slipping through · warn: elevated failover (degraded but
+// recovering) · ok: healthy.
+export function projectStatus(f: { failRate: number; failoverRate: number }): ProjectStatus {
+  if (f.failRate > 0.005) return "down";
+  if (f.failoverRate > 0.03) return "warn";
+  return "ok";
 }
 
 // Per-project rollup for the fleet overview. Two db9-safe GROUP BYs merged in JS
@@ -148,6 +159,7 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
     `SELECT project,
             count(*)::int                            AS calls,
             count(*) FILTER (WHERE failed_over)::int AS failovers,
+            count(*) FILTER (WHERE NOT ok)::int      AS failures,
             coalesce(sum(cost_usd), 0)::float8       AS cost_usd,
             coalesce(sum(baseline_usd), 0)::float8   AS baseline_usd
        FROM lcr_calls
@@ -178,6 +190,7 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
         savedUsd: saved,
         savePct: r.baseline_usd > 0 ? saved / r.baseline_usd : 0,
         failoverRate: r.calls > 0 ? r.failovers / r.calls : 0,
+        failRate: r.calls > 0 ? r.failures / r.calls : 0,
         topProvider: t?.provider ?? "—",
         topProviderPct: t && r.calls > 0 ? t.calls / r.calls : 0,
       };

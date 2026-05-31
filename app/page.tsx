@@ -6,6 +6,7 @@ import {
   getRecent,
   topFailoverReasons,
   asWindow,
+  projectStatus,
   WINDOWS,
   type WindowKey,
   type CallRow,
@@ -150,6 +151,28 @@ createLCR({
   );
 }
 
+// ── per-project status strip (top of fleet) ──
+const STATUS_LABEL = { ok: "healthy", warn: "elevated failover", down: "failures" } as const;
+
+function StatusStrip({ fleet, win }: { fleet: FleetRow[]; win: WindowKey }) {
+  return (
+    <div className="strip">
+      {fleet.map((f) => {
+        const s = projectStatus(f);
+        return (
+          <a key={f.project} className={`chip status-${s}`} href={qs(f.project, win)} title={STATUS_LABEL[s]}>
+            <span className={`dot ${s}`} />
+            <span className="pname">{f.project}</span>
+            <span className="pstat">
+              {compact(f.calls)} calls · {pct(f.failoverRate)} failover
+            </span>
+          </a>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── views ──
 function FleetView({ fleet }: { fleet: FleetRow[] }) {
   return (
@@ -284,6 +307,7 @@ export default async function Page({
     } else if (project === "all") {
       body = (
         <>
+          <StatusStrip fleet={fleet} win={win} />
           <Hero m={metrics} />
           <FleetView fleet={fleet} />
         </>

@@ -36,6 +36,23 @@ header.top .sub { color: var(--dim); font-size: 13px; }
 }
 .pill.active { color: var(--text); border-color: var(--accent); background: rgba(88,166,255,.1); }
 
+.strip { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 22px; }
+.chip {
+  display: flex; flex-direction: column; gap: 3px;
+  padding: 10px 14px; min-width: 150px;
+  background: var(--panel); border: 1px solid var(--border); border-radius: 10px;
+  border-left-width: 3px;
+}
+.chip.status-ok { border-left-color: var(--green); }
+.chip.status-warn { border-left-color: var(--yellow); }
+.chip.status-down { border-left-color: var(--red); }
+.chip .pname { font-weight: 600; display: flex; align-items: center; }
+.chip .pstat { color: var(--dim); font-size: 12px; }
+.dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 7px; }
+.dot.ok { background: var(--green); }
+.dot.warn { background: var(--yellow); }
+.dot.down { background: var(--red); }
+
 .cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-bottom: 28px; }
 .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; }
 .card .k { color: var(--dim); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }

@@ -165,7 +165,8 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
   const spend = series.map((b) => b.cost);
   const calls = series.map((b) => b.calls);
   // Tone only when a number needs attention — healthy values stay neutral.
-  const saveTone = m.savePct < 0.2 ? "down" : m.savePct < 0.4 ? "warn" : undefined;
+  // Save % is always a win (savePct is floored at 0 in queries) — green when
+  // there's something saved, neutral at 0. Never red: low savings isn't a fault.
   const foTone = m.failoverRate < 0.03 ? undefined : m.failoverRate < 0.08 ? "warn" : "down";
   return (
     <div className="stat-row">
@@ -176,7 +177,7 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
         spark={saved}
         sparkTone="var(--green)"
       />
-      <Stat label="Save %" value={pct(m.savePct)} sub="vs direct" tone={saveTone} />
+      <Stat label="Save %" value={m.savePct > 0 ? <span className="pos">{pct(m.savePct)}</span> : pct(m.savePct)} sub="vs direct" />
       <Stat
         label="Spent"
         value={money(m.costUsd)}
@@ -336,8 +337,10 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
 }
 
 // ── fleet table (projects axis · health embedded as a column) ───────────────
+// Save % only ever ranges [0, good] — green when saving, muted at 0. Red stays
+// reserved for real faults (failover, leaked), so it keeps its alarm value.
 function saveTone(p: number): string {
-  return p >= 0.4 ? "ok" : p >= 0.2 ? "warn" : "down";
+  return p > 0 ? "ok" : "muted";
 }
 
 function FleetTable({ fleet, timeline, win }: { fleet: FleetRow[]; timeline: TimelineRow[]; win: WindowKey }) {

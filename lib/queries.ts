@@ -11,6 +11,33 @@ export const WINDOWS = {
 } as const;
 export type WindowKey = keyof typeof WINDOWS;
 
+// The window immediately before the current one, same length — for "Δ vs prev"
+// on the stat tiles. Doubled interval as the far bound; the near bound is the
+// current window's interval.
+const WINDOWS_PREV = {
+  "1h": "2 hours",
+  "24h": "48 hours",
+  "7d": "14 days",
+  "30d": "60 days",
+} as const;
+
+// Bucket width (seconds) per window → ~12–30 buckets across the range. Used for
+// the time-series chart, sparklines, and the state timeline. We bucket on
+// epoch-floor (not date_trunc) so non-standard widths like 5min / 6h work and
+// it stays db9-safe.
+const BUCKET_SECONDS: Record<WindowKey, number> = {
+  "1h": 300, // 5 min  → 12
+  "24h": 3600, // 1 hour → 24
+  "7d": 21600, // 6 hour → 28
+  "30d": 86400, // 1 day  → 30
+};
+const WINDOW_SECONDS: Record<WindowKey, number> = {
+  "1h": 3600,
+  "24h": 86400,
+  "7d": 604800,
+  "30d": 2592000,
+};
+
 export function asWindow(v: string | undefined): WindowKey {
   return v && v in WINDOWS ? (v as WindowKey) : "24h";
 }
@@ -25,121 +52,116 @@ function scope(project: string): { clause: string; params: string[] } {
 function since(win: WindowKey): string {
   return `ts > now() - interval '${WINDOWS[win]}'`;
 }
+function sincePrev(win: WindowKey): string {
+  return `ts > now() - interval '${WINDOWS_PREV[win]}' AND ts <= now() - interval '${WINDOWS[win]}'`;
+}
+
+// winner / attempts[].provider arrive as `concreteModel@provider` (e.g.
+// gemini-2.5-flash-lite@tokenmart) or a bare provider (e.g. runware). Two
+// distinct axes live in that one string:
+//   provider = who served  → the failover / health axis (cheapest vendor, SLA)
+//   model    = what ran     → the cost / usage axis (where the tokens & $ go)
+const PROVIDER_EXPR = `CASE WHEN winner LIKE '%@%' THEN split_part(winner, '@', 2) ELSE coalesce(winner, '(failed)') END`;
+const MODEL_EXPR = `CASE WHEN winner LIKE '%@%' THEN split_part(winner, '@', 1) ELSE coalesce(nullif(model, ''), winner, '(failed)') END`;
+
+// JS equivalent of PROVIDER_EXPR for the attempts[].provider strings.
+export function providerOf(route: string): string {
+  const i = route.lastIndexOf("@");
+  return i >= 0 ? route.slice(i + 1) : route;
+}
+
+// Shared time axis (epoch-second bucket starts) so the chart and the state
+// timeline line up column-for-column.
+function bucketAxis(win: WindowKey): number[] {
+  const sec = BUCKET_SECONDS[win];
+  const nowSec = Math.floor(Date.now() / 1000);
+  const start = Math.floor((nowSec - WINDOW_SECONDS[win]) / sec) * sec;
+  const axis: number[] = [];
+  for (let t = start; t <= nowSec; t += sec) axis.push(t);
+  return axis;
+}
+
+// ── stat row ──────────────────────────────────────────────────────────────
 
 export interface Metrics {
   calls: number;
-  failovers: number;
+  failovers: number; // failed_over = true (had to try a fallback)
+  caught: number; // failed_over AND ok = a hiccup absorbed, user unaffected
+  failures: number; // NOT ok = every provider failed, leaked to the user
   failoverRate: number;
   costUsd: number;
   savedUsd: number;
   savePct: number;
   avgLatencyMs: number;
+  tokens: number; // input + output, summed
 }
 
-export async function getMetrics(project: string, win: WindowKey): Promise<Metrics> {
+export async function getMetrics(project: string, win: WindowKey, prev = false): Promise<Metrics> {
   const { clause, params } = scope(project);
+  const time = prev ? sincePrev(win) : since(win);
   const { rows } = await getPool().query(
     `SELECT
-        count(*)::int                            AS calls,
-        count(*) FILTER (WHERE failed_over)::int AS failovers,
-        coalesce(sum(cost_usd), 0)::float8       AS cost_usd,
-        coalesce(sum(baseline_usd), 0)::float8   AS baseline_usd,
-        coalesce(avg(latency_ms), 0)::float8     AS avg_latency
+        count(*)::int                                  AS calls,
+        count(*) FILTER (WHERE failed_over)::int        AS failovers,
+        count(*) FILTER (WHERE failed_over AND ok)::int AS caught,
+        count(*) FILTER (WHERE NOT ok)::int             AS failures,
+        coalesce(sum(cost_usd), 0)::float8              AS cost_usd,
+        coalesce(sum(baseline_usd), 0)::float8          AS baseline_usd,
+        coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
+        coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
-      WHERE ${since(win)}${clause}`,
+      WHERE ${time}${clause}`,
     params,
   );
-  const r = rows[0] ?? { calls: 0, failovers: 0, cost_usd: 0, baseline_usd: 0, avg_latency: 0 };
-  const savedUsd = Math.max(0, r.baseline_usd - r.cost_usd);
+  const r = rows[0] ?? {};
+  const calls = r.calls ?? 0;
+  const savedUsd = Math.max(0, (r.baseline_usd ?? 0) - (r.cost_usd ?? 0));
   return {
-    calls: r.calls,
-    failovers: r.failovers,
-    failoverRate: r.calls > 0 ? r.failovers / r.calls : 0,
-    costUsd: r.cost_usd,
+    calls,
+    failovers: r.failovers ?? 0,
+    caught: r.caught ?? 0,
+    failures: r.failures ?? 0,
+    failoverRate: calls > 0 ? (r.failovers ?? 0) / calls : 0,
+    costUsd: r.cost_usd ?? 0,
     savedUsd,
     savePct: r.baseline_usd > 0 ? savedUsd / r.baseline_usd : 0,
-    avgLatencyMs: r.avg_latency,
+    avgLatencyMs: r.avg_latency ?? 0,
+    tokens: Number(r.tokens ?? 0),
   };
 }
 
-export interface ProviderShare {
-  provider: string;
+// ── time series (chart + tile sparklines) ───────────────────────────────────
+
+export interface Bucket {
+  t: number; // bucket start, epoch seconds
+  cost: number;
+  baseline: number;
   calls: number;
 }
 
-export async function getProviderMix(project: string, win: WindowKey): Promise<ProviderShare[]> {
+export async function getTimeSeries(project: string, win: WindowKey): Promise<Bucket[]> {
+  const sec = BUCKET_SECONDS[win];
   const { clause, params } = scope(project);
   const { rows } = await getPool().query(
-    `SELECT coalesce(winner, '(failed)') AS provider, count(*)::int AS calls
+    `SELECT (floor(extract(epoch from ts) / ${sec}) * ${sec})::bigint AS bucket,
+            coalesce(sum(cost_usd), 0)::float8     AS cost,
+            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            count(*)::int                          AS calls
        FROM lcr_calls
       WHERE ${since(win)}${clause}
-      GROUP BY winner
-      ORDER BY calls DESC`,
+      GROUP BY bucket
+      ORDER BY bucket`,
     params,
   );
-  return rows as ProviderShare[];
+  const by = new Map<number, { cost: number; baseline: number; calls: number }>();
+  for (const r of rows) by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, calls: r.calls });
+  return bucketAxis(win).map((t) => {
+    const r = by.get(t);
+    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, calls: r?.calls ?? 0 };
+  });
 }
 
-export interface SavingsRow {
-  model: string;
-  provider: string;
-  calls: number;
-  savedUsd: number;
-}
-
-export async function getSavingsBreakdown(project: string, win: WindowKey): Promise<SavingsRow[]> {
-  const { clause, params } = scope(project);
-  const { rows } = await getPool().query(
-    `SELECT model, coalesce(winner, '(failed)') AS provider, count(*)::int AS calls,
-            coalesce(sum(baseline_usd - cost_usd), 0)::float8 AS saved_usd
-       FROM lcr_calls
-      WHERE ${since(win)}${clause}
-      GROUP BY model, winner
-      ORDER BY saved_usd DESC
-      LIMIT 8`,
-    params,
-  );
-  return rows.map((r) => ({ model: r.model, provider: r.provider, calls: r.calls, savedUsd: r.saved_usd }));
-}
-
-export interface CallRow {
-  id: string;
-  project: string;
-  ts: string;
-  model: string;
-  winner: string | null;
-  ok: boolean;
-  failed_over: boolean;
-  latency_ms: number;
-  cost_usd: number;
-  attempts: { provider: string; ok: boolean; latencyMs: number; errorClass?: string }[];
-}
-
-export async function getRecent(project: string, win: WindowKey, limit = 60): Promise<CallRow[]> {
-  const { clause, params } = scope(project);
-  const { rows } = await getPool().query(
-    `SELECT id, project, ts, model, winner, ok, failed_over, latency_ms,
-            cost_usd::float8 AS cost_usd, attempts
-       FROM lcr_calls
-      WHERE ${since(win)}${clause}
-      ORDER BY ts DESC
-      LIMIT ${limit}`,
-    params,
-  );
-  return rows as CallRow[];
-}
-
-export interface FleetRow {
-  project: string;
-  calls: number;
-  costUsd: number;
-  savedUsd: number;
-  savePct: number;
-  failoverRate: number;
-  failRate: number; // share of calls where every provider failed (ok = false)
-  topProvider: string;
-  topProviderPct: number;
-}
+// ── state timeline (per-project health over time) ───────────────────────────
 
 export type ProjectStatus = "ok" | "warn" | "down";
 
@@ -151,8 +173,60 @@ export function projectStatus(f: { failRate: number; failoverRate: number }): Pr
   return "ok";
 }
 
-// Per-project rollup for the fleet overview. Two db9-safe GROUP BYs merged in JS
-// (avoids window functions): totals per project + winner shares per project.
+export interface TimelineRow {
+  project: string;
+  calls: number;
+  buckets: (ProjectStatus | "none")[]; // "none" = no traffic in that bucket
+}
+
+export async function getProjectTimeline(win: WindowKey): Promise<TimelineRow[]> {
+  const sec = BUCKET_SECONDS[win];
+  const { rows } = await getPool().query(
+    `SELECT project,
+            (floor(extract(epoch from ts) / ${sec}) * ${sec})::bigint AS bucket,
+            count(*)::int                       AS calls,
+            count(*) FILTER (WHERE NOT ok)::int AS failures,
+            count(*) FILTER (WHERE failed_over)::int AS failovers
+       FROM lcr_calls
+      WHERE ${since(win)}
+      GROUP BY project, bucket`,
+  );
+  const axis = bucketAxis(win);
+  const byProject = new Map<string, Map<number, { calls: number; failures: number; failovers: number }>>();
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    if (!byProject.has(r.project)) byProject.set(r.project, new Map());
+    byProject.get(r.project)!.set(Number(r.bucket), r);
+    totals.set(r.project, (totals.get(r.project) ?? 0) + r.calls);
+  }
+  return [...byProject.entries()]
+    .map(([project, m]): TimelineRow => ({
+      project,
+      calls: totals.get(project) ?? 0,
+      buckets: axis.map((t) => {
+        const r = m.get(t);
+        if (!r || r.calls === 0) return "none";
+        return projectStatus({ failRate: r.failures / r.calls, failoverRate: r.failovers / r.calls });
+      }),
+    }))
+    .sort((a, b) => b.calls - a.calls);
+}
+
+// ── fleet table ─────────────────────────────────────────────────────────────
+
+export interface FleetRow {
+  project: string;
+  calls: number;
+  costUsd: number;
+  savedUsd: number;
+  savePct: number;
+  failoverRate: number;
+  failures: number; // leaked count (every provider failed)
+  failRate: number;
+  topProvider: string;
+  topProviderPct: number;
+}
+
 export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
   const pool = getPool();
   const totals = await pool.query(
@@ -167,10 +241,10 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
       GROUP BY project`,
   );
   const mix = await pool.query(
-    `SELECT project, coalesce(winner, '(failed)') AS provider, count(*)::int AS calls
+    `SELECT project, ${PROVIDER_EXPR} AS provider, count(*)::int AS calls
        FROM lcr_calls
       WHERE ${since(win)}
-      GROUP BY project, winner`,
+      GROUP BY project, ${PROVIDER_EXPR}`,
   );
 
   const top = new Map<string, { provider: string; calls: number }>();
@@ -190,28 +264,181 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
         savedUsd: saved,
         savePct: r.baseline_usd > 0 ? saved / r.baseline_usd : 0,
         failoverRate: r.calls > 0 ? r.failovers / r.calls : 0,
+        failures: r.failures,
         failRate: r.calls > 0 ? r.failures / r.calls : 0,
         topProvider: t?.provider ?? "—",
         topProviderPct: t && r.calls > 0 ? t.calls / r.calls : 0,
       };
     })
-    .sort((a, b) => b.calls - a.calls);
+    .sort((a, b) => b.savedUsd - a.savedUsd);
 }
 
-// Top failover reasons, computed in JS from the recent sample — keeps the SQL
-// db9-safe (no jsonb_array_elements). Labelled "recent" in the UI.
-export function topFailoverReasons(rows: CallRow[], limit = 6): { reason: string; count: number }[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    for (const a of row.attempts) {
-      if (!a.ok) {
-        const key = `${a.provider} ${a.errorClass ?? "error"}`;
-        counts.set(key, (counts.get(key) ?? 0) + 1);
+// ── provider table (project drill-down: who served / what it cost) ──────────
+
+export interface ProviderStat {
+  provider: string;
+  calls: number;
+  share: number;
+  costPerCall: number;
+  avgLatencyMs: number;
+  savedUsd: number;
+  tokens: number; // input + output, summed over calls this provider served
+}
+
+export async function getProviderStats(project: string, win: WindowKey): Promise<ProviderStat[]> {
+  const { clause, params } = scope(project);
+  const { rows } = await getPool().query(
+    `SELECT ${PROVIDER_EXPR} AS provider,
+            count(*)::int                       AS calls,
+            coalesce(sum(cost_usd), 0)::float8     AS cost,
+            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
+            coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
+       FROM lcr_calls
+      WHERE ${since(win)}${clause}
+      GROUP BY ${PROVIDER_EXPR}
+      ORDER BY calls DESC`,
+    params,
+  );
+  const total = rows.reduce((s, r) => s + r.calls, 0) || 1;
+  return rows.map((r) => ({
+    provider: r.provider,
+    calls: r.calls,
+    share: r.calls / total,
+    costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
+    avgLatencyMs: r.avg_latency,
+    savedUsd: Math.max(0, r.baseline - r.cost),
+    tokens: Number(r.tokens ?? 0),
+  }));
+}
+
+// By-model usage / cost breakdown — the cost axis (a model doesn't have "health",
+// the provider serving it does, so this is a table, not a timeline).
+export interface ModelStat {
+  model: string;
+  calls: number;
+  share: number;
+  tokens: number;
+  costPerCall: number;
+  avgLatencyMs: number;
+  savedUsd: number;
+}
+
+export async function getModelStats(project: string, win: WindowKey): Promise<ModelStat[]> {
+  const { clause, params } = scope(project);
+  const { rows } = await getPool().query(
+    `SELECT ${MODEL_EXPR} AS model,
+            count(*)::int                       AS calls,
+            coalesce(sum(cost_usd), 0)::float8     AS cost,
+            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
+            coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
+       FROM lcr_calls
+      WHERE ${since(win)}${clause}
+      GROUP BY ${MODEL_EXPR}
+      ORDER BY calls DESC`,
+    params,
+  );
+  const total = rows.reduce((s, r) => s + r.calls, 0) || 1;
+  return rows.map((r) => ({
+    model: r.model,
+    calls: r.calls,
+    share: r.calls / total,
+    tokens: Number(r.tokens ?? 0),
+    costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
+    avgLatencyMs: r.avg_latency,
+    savedUsd: Math.max(0, r.baseline - r.cost),
+  }));
+}
+
+// Per-provider health over time — the provider analog of getProjectTimeline.
+// Computed in JS from `attempts` (every provider tried, not just the winner), so
+// a flaky provider shows red even when we failed over away from it. Sampled to
+// the most recent `sampleLimit` calls to bound cost (db9-safe: no jsonb unnest).
+export interface ProviderHealthRow {
+  provider: string;
+  attempts: number;
+  failRate: number;
+  buckets: (ProjectStatus | "none")[];
+}
+
+export async function getProviderHealth(
+  project: string,
+  win: WindowKey,
+  sampleLimit = 8000,
+): Promise<ProviderHealthRow[]> {
+  const sec = BUCKET_SECONDS[win];
+  const { clause, params } = scope(project);
+  const { rows } = await getPool().query(
+    `SELECT (floor(extract(epoch from ts) / ${sec}) * ${sec})::bigint AS bucket, attempts
+       FROM lcr_calls
+      WHERE ${since(win)}${clause}
+      ORDER BY ts DESC
+      LIMIT ${sampleLimit}`,
+    params,
+  );
+  const axis = bucketAxis(win);
+  const idx = new Map(axis.map((t, i) => [t, i]));
+  const prov = new Map<string, { attempts: number; fails: number; b: { a: number; f: number }[] }>();
+  for (const r of rows) {
+    const bi = idx.get(Number(r.bucket));
+    if (bi === undefined) continue;
+    const attempts: { provider?: string; ok?: boolean }[] = Array.isArray(r.attempts) ? r.attempts : [];
+    for (const a of attempts) {
+      const name = providerOf(a.provider ?? "(unknown)");
+      let p = prov.get(name);
+      if (!p) {
+        p = { attempts: 0, fails: 0, b: axis.map(() => ({ a: 0, f: 0 })) };
+        prov.set(name, p);
+      }
+      p.attempts++;
+      p.b[bi].a++;
+      if (a.ok === false) {
+        p.fails++;
+        p.b[bi].f++;
       }
     }
   }
-  return [...counts.entries()]
-    .map(([reason, count]) => ({ reason, count }))
-    .sort((a, b) => b.count - a.count)
-    .slice(0, limit);
+  return [...prov.entries()]
+    .map(([provider, p]): ProviderHealthRow => ({
+      provider,
+      attempts: p.attempts,
+      failRate: p.attempts ? p.fails / p.attempts : 0,
+      buckets: p.b.map(({ a, f }) => {
+        if (a === 0) return "none";
+        const r = f / a;
+        return r < 0.02 ? "ok" : r < 0.15 ? "warn" : "down";
+      }),
+    }))
+    .sort((x, y) => y.attempts - x.attempts);
+}
+
+// ── failover events log ─────────────────────────────────────────────────────
+
+export interface CallRow {
+  id: string;
+  project: string;
+  ts: string;
+  model: string;
+  winner: string | null;
+  ok: boolean;
+  failed_over: boolean;
+  latency_ms: number;
+  cost_usd: number;
+  tokens: number; // input + output
+  attempts: { provider: string; ok: boolean; latencyMs: number; errorClass?: string }[];
+}
+
+export async function getFailoverEvents(project: string, win: WindowKey, limit = 40): Promise<CallRow[]> {
+  const { clause, params } = scope(project);
+  const { rows } = await getPool().query(
+    `SELECT id, project, ts, model, winner, ok, failed_over, latency_ms,
+            cost_usd::float8 AS cost_usd, (input_tokens + output_tokens)::int AS tokens, attempts
+       FROM lcr_calls
+      WHERE ${since(win)}${clause} AND failed_over
+      ORDER BY ts DESC
+      LIMIT ${limit}`,
+    params,
+  );
+  return rows as CallRow[];
 }

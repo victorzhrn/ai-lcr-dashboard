@@ -30,6 +30,10 @@ export function getPool(): Pool {
       ssl: sslFor(connectionString),
       max: 3,
       idleTimeoutMillis: 10_000,
+      // Fail fast if the database is unreachable (e.g. a reclaimed db9 instance)
+      // instead of hanging ~16s per request before the page falls back to the
+      // setup notice. A keep-alive cron prevents reclamation in the first place.
+      connectionTimeoutMillis: 8_000,
     });
   }
   return globalThis.__lcrPool;

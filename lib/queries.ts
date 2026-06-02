@@ -92,6 +92,9 @@ export interface Metrics {
   savePct: number;
   cachedSavingUsd: number; // prompt-cache discount the serving provider gave — NOT routing, shown apart
   avgLatencyMs: number;
+  // mean TTFT over streaming calls in the window; null when none carried one
+  // (all non-streaming, or only pre-ttft data) — the UI shows "—", not a fake 0.
+  ttftMs: number | null;
   tokens: number; // input + output, summed
   inputTokens: number;
   outputTokens: number;
@@ -111,6 +114,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
         coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline,
         coalesce(sum(cached_saving_usd), 0)::float8     AS cached_saving,
         coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
+        avg(ttft_ms)::float8                            AS ttft_ms,
         coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens,
         coalesce(sum(input_tokens), 0)::bigint          AS input_tokens,
         coalesce(sum(output_tokens), 0)::bigint         AS output_tokens
@@ -136,6 +140,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
     savePct: r.baseline_usd > 0 ? savedUsd / r.baseline_usd : 0,
     cachedSavingUsd: r.cached_saving ?? 0,
     avgLatencyMs: r.avg_latency ?? 0,
+    ttftMs: r.ttft_ms == null ? null : Number(r.ttft_ms),
     tokens: Number(r.tokens ?? 0),
     inputTokens: Number(r.input_tokens ?? 0),
     outputTokens: Number(r.output_tokens ?? 0),

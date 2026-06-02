@@ -243,9 +243,9 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
         hint="Input + output tokens across all calls, shown as in / out."
       />
       <Stat
-        label="Avg latency"
-        value={ms(m.avgLatencyMs)}
-        hint="Mean end-to-end time per call, including any failover retries."
+        label="TTFT"
+        value={m.ttftMs == null ? "—" : ms(m.ttftMs)}
+        hint="Time to first token — mean over streaming calls in this window. The industry-standard responsiveness metric; failover overhead and generation time are excluded. — = no streaming sample yet."
       />
     </div>
   );

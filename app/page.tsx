@@ -161,7 +161,7 @@ function DeltaSub({ d }: { d: ReturnType<typeof delta> }) {
 
 // ── stat row ────────────────────────────────────────────────────────────────
 function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucket[] }) {
-  const saved = series.map((b) => Math.max(0, b.baseline - b.cost));
+  const saved = series.map((b) => Math.max(0, b.baseline - b.baseCost));
   const spend = series.map((b) => b.cost);
   const calls = series.map((b) => b.calls);
   // Tone only when a number needs attention — healthy values stay neutral.
@@ -206,7 +206,7 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
 
 // ── time-series chart (saved area + spend line) ─────────────────────────────
 function TimeChart({ series, win }: { series: Bucket[]; win: WindowKey }) {
-  const saved = series.map((b) => Math.max(0, b.baseline - b.cost));
+  const saved = series.map((b) => Math.max(0, b.baseline - b.baseCost));
   const spend = series.map((b) => b.cost);
   const max = Math.max(...saved, ...spend, 1e-9);
   const w = 1000;

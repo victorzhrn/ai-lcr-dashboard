@@ -104,7 +104,8 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
         count(*) FILTER (WHERE failed_over AND ok)::int AS caught,
         count(*) FILTER (WHERE NOT ok)::int             AS failures,
         coalesce(sum(cost_usd), 0)::float8              AS cost_usd,
-        coalesce(sum(baseline_usd), 0)::float8          AS baseline_usd,
+        coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
+        coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline,
         coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
         coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
@@ -113,7 +114,11 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
   );
   const r = rows[0] ?? {};
   const calls = r.calls ?? 0;
-  const savedUsd = Math.max(0, (r.baseline_usd ?? 0) - (r.cost_usd ?? 0));
+  // Savings only counts calls that carry a baseline (baseline_usd > 0). ai-lcr
+  // reports a baseline for media routing but not text, so unbaselined calls have
+  // cost but no baseline — summing them in would drag net savings below zero and
+  // hide real savings. SPENT (cost_usd) still counts every call.
+  const savedUsd = Math.max(0, (r.baseline_usd ?? 0) - (r.cost_with_baseline ?? 0));
   return {
     calls,
     failovers: r.failovers ?? 0,
@@ -132,8 +137,9 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
 
 export interface Bucket {
   t: number; // bucket start, epoch seconds
-  cost: number;
-  baseline: number;
+  cost: number; // total spend (every call)
+  baseline: number; // baseline of calls that carry one
+  baseCost: number; // cost of those same baseline-bearing calls — so saved = max(0, baseline - baseCost)
   calls: number;
 }
 
@@ -143,7 +149,8 @@ export async function getTimeSeries(project: string, win: WindowKey): Promise<Bu
   const { rows } = await getPool().query(
     `SELECT (floor(extract(epoch from ts) / ${sec}) * ${sec})::bigint AS bucket,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
+            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
             count(*)::int                          AS calls
        FROM lcr_calls
       WHERE ${since(win)}${clause}
@@ -151,11 +158,11 @@ export async function getTimeSeries(project: string, win: WindowKey): Promise<Bu
       ORDER BY bucket`,
     params,
   );
-  const by = new Map<number, { cost: number; baseline: number; calls: number }>();
-  for (const r of rows) by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, calls: r.calls });
+  const by = new Map<number, { cost: number; baseline: number; baseCost: number; calls: number }>();
+  for (const r of rows) by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, baseCost: r.base_cost, calls: r.calls });
   return bucketAxis(win).map((t) => {
     const r = by.get(t);
-    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, calls: r?.calls ?? 0 };
+    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, baseCost: r?.baseCost ?? 0, calls: r?.calls ?? 0 };
   });
 }
 
@@ -233,7 +240,8 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
             count(*) FILTER (WHERE failed_over)::int AS failovers,
             count(*) FILTER (WHERE NOT ok)::int      AS failures,
             coalesce(sum(cost_usd), 0)::float8       AS cost_usd,
-            coalesce(sum(baseline_usd), 0)::float8   AS baseline_usd
+            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
+            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline
        FROM lcr_calls
       WHERE ${since(win)}
       GROUP BY project`,
@@ -253,7 +261,7 @@ export async function getFleet(win: WindowKey): Promise<FleetRow[]> {
 
   return totals.rows
     .map((r): FleetRow => {
-      const saved = Math.max(0, r.baseline_usd - r.cost_usd);
+      const saved = Math.max(0, r.baseline_usd - r.cost_with_baseline);
       const t = top.get(r.project);
       return {
         project: r.project,
@@ -289,7 +297,8 @@ export async function getProviderStats(project: string, win: WindowKey): Promise
     `SELECT ${PROVIDER_EXPR} AS provider,
             count(*)::int                       AS calls,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
+            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
             coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
@@ -305,7 +314,7 @@ export async function getProviderStats(project: string, win: WindowKey): Promise
     share: r.calls / total,
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
-    savedUsd: Math.max(0, r.baseline - r.cost),
+    savedUsd: Math.max(0, r.baseline - r.base_cost),
     tokens: Number(r.tokens ?? 0),
   }));
 }
@@ -328,7 +337,8 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
     `SELECT ${MODEL_EXPR} AS model,
             count(*)::int                       AS calls,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd), 0)::float8 AS baseline,
+            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
+            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
             coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
@@ -345,7 +355,7 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
     tokens: Number(r.tokens ?? 0),
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
-    savedUsd: Math.max(0, r.baseline - r.cost),
+    savedUsd: Math.max(0, r.baseline - r.base_cost),
   }));
 }
 

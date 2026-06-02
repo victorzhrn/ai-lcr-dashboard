@@ -88,8 +88,9 @@ export interface Metrics {
   failures: number; // NOT ok = every provider failed, leaked to the user
   failoverRate: number;
   costUsd: number;
-  savedUsd: number;
+  savedUsd: number; // routing saving: baseline (fallback leg) − cost on routed calls
   savePct: number;
+  cachedSavingUsd: number; // prompt-cache discount the serving provider gave — NOT routing, shown apart
   avgLatencyMs: number;
   tokens: number; // input + output, summed
   inputTokens: number;
@@ -108,6 +109,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
         coalesce(sum(cost_usd), 0)::float8              AS cost_usd,
         coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
         coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline,
+        coalesce(sum(cached_saving_usd), 0)::float8     AS cached_saving,
         coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
         coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens,
         coalesce(sum(input_tokens), 0)::bigint          AS input_tokens,
@@ -132,6 +134,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
     costUsd: r.cost_usd ?? 0,
     savedUsd,
     savePct: r.baseline_usd > 0 ? savedUsd / r.baseline_usd : 0,
+    cachedSavingUsd: r.cached_saving ?? 0,
     avgLatencyMs: r.avg_latency ?? 0,
     tokens: Number(r.tokens ?? 0),
     inputTokens: Number(r.input_tokens ?? 0),

@@ -75,8 +75,14 @@ CREATE TABLE IF NOT EXISTS lcr_calls (
   output_tokens integer NOT NULL,
   cost_usd      numeric(12,6) NOT NULL,
   baseline_usd  numeric(12,6) NOT NULL DEFAULT 0,
+  cached_saving_usd numeric(12,6) NOT NULL DEFAULT 0,
   attempts      jsonb NOT NULL
 );
 ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS ttft_ms integer;
+-- cached_saving_usd: prompt-cache discount the serving provider gave (input −
+-- cacheRead on cached tokens). Reported separately from baseline_usd because
+-- caching is the provider's own benefit, not a routing saving. Older rows (and
+-- non-streaming/failed calls) stay 0, so summing is always safe.
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS cached_saving_usd numeric(12,6) NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 `;

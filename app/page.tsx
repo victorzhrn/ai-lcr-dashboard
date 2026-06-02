@@ -187,13 +187,19 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
         sub={<DeltaSub d={delta(m.savedUsd, prev.savedUsd)} />}
         spark={saved}
         sparkTone="var(--green)"
-        hint="What routing saved vs. sending every call to the priciest provider in its chain — same tokens, higher sticker price."
+        hint="What routing saved: each call's cost vs. what the always-on fallback (the list-price provider you'd use without routing) would have charged for the same tokens. When the fallback itself served, this is 0 — no routing happened."
       />
       <Stat
         label="Save %"
         value={m.savePct > 0 ? <span className="pos">{pct(m.savePct)}</span> : pct(m.savePct)}
         sub="vs direct"
-        hint="Saved as a share of that would-be direct cost."
+        hint="Routing saved as a share of that would-be direct (fallback) cost."
+      />
+      <Stat
+        label="Cache saved"
+        value={m.cachedSavingUsd > 0 ? <span className="pos">{money(m.cachedSavingUsd)}</span> : money(m.cachedSavingUsd)}
+        sub={<DeltaSub d={delta(m.cachedSavingUsd, prev.cachedSavingUsd)} />}
+        hint="What prompt caching saved: cached input tokens billed at the provider's discounted cache-read rate instead of full input. Separate from routing — caching is the provider's own benefit (it happens with or without LCR), so it's never folded into Saved."
       />
       <Stat
         label="Spent"

@@ -179,6 +179,10 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
   // actually saw an error (Leaked), so red keeps its alarm value. Matches the
   // Fleet table, which already colors failover yellow-only.
   const foTone = m.failoverRate < 0.03 ? undefined : "warn";
+  // Of the calls that failed over, the share a fallback caught — green above 99%,
+  // since "nearly every hiccup absorbed" is the healthy state. "—" when nothing
+  // failed over: there was nothing to catch.
+  const caughtPct = m.failovers > 0 ? m.caught / m.failovers : null;
   return (
     <div className="stat-row">
       <Stat
@@ -219,7 +223,7 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
       <Stat
         label="Failover"
         value={pct(m.failoverRate)}
-        sub={`${compact(m.caught)} caught`}
+        sub={caughtPct == null ? "—" : <span className={caughtPct > 0.99 ? "up" : undefined}>{pct(caughtPct)} caught</span>}
         tone={foTone}
         hint="Calls whose first-choice provider failed, so ai-lcr retried on a fallback. Almost all are 'caught' — the user still got a response. Shown in yellow, never red: the request survived."
       />

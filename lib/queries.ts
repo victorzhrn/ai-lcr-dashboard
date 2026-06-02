@@ -291,6 +291,7 @@ export interface ProviderStat {
   provider: string;
   calls: number;
   share: number;
+  spentUsd: number; // total cost_usd across calls this provider served
   costPerCall: number;
   avgLatencyMs: number;
   savedUsd: number;
@@ -318,6 +319,7 @@ export async function getProviderStats(project: string, win: WindowKey): Promise
     provider: r.provider,
     calls: r.calls,
     share: r.calls / total,
+    spentUsd: r.cost,
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
     savedUsd: Math.max(0, r.baseline - r.base_cost),

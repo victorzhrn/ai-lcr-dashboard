@@ -317,6 +317,7 @@ interface ProviderRow {
   share: number;
   calls: number;
   tokens: number;
+  spentUsd: number; // total cost on this provider
   costPerCall: number;
   savedUsd: number;
   attempts: number; // total attempts on this provider (winner + failed-over-away)
@@ -330,7 +331,7 @@ interface ProviderRow {
 function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): ProviderRow[] {
   const m = new Map<string, ProviderRow>();
   for (const h of health) {
-    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, costPerCall: 0, savedUsd: 0, attempts: h.attempts, failRate: h.failRate, buckets: h.buckets });
+    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, spentUsd: 0, costPerCall: 0, savedUsd: 0, attempts: h.attempts, failRate: h.failRate, buckets: h.buckets });
   }
   for (const s of stats) {
     const base = m.get(s.provider) ?? { provider: s.provider, attempts: 0, failRate: 0, buckets: [] as (ProjectStatus | "none")[] };
@@ -340,6 +341,7 @@ function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): Pro
       share: s.share,
       calls: s.calls,
       tokens: s.tokens,
+      spentUsd: s.spentUsd,
       costPerCall: s.costPerCall,
       savedUsd: s.savedUsd,
     } as ProviderRow);
@@ -363,6 +365,7 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
             <th className="r">calls</th>
             <th className="r">tokens</th>
             <th className="r">you/call</th>
+            <th className="r">spent</th>
             <th className="r">saved</th>
             <th className="r">reliability</th>
             <th className="hcol">health</th>
@@ -381,6 +384,7 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
               <td className="r">{compact(r.calls)}</td>
               <td className="r dim">{compact(r.tokens)}</td>
               <td className="r">{money(r.costPerCall)}</td>
+              <td className="r">{money(r.spentUsd)}</td>
               <td className="r pos">{money(r.savedUsd)}</td>
               <SuccessRate attempts={r.attempts} failRate={r.failRate} />
               <td className="hcol">

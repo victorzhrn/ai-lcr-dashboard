@@ -78,7 +78,7 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 
 /* ── template vars ── */
 .controls { display: flex; gap: 22px; flex-wrap: wrap; margin: 14px 0 18px; }
-.controls .group { display: flex; gap: 6px; align-items: center; }
+.controls .group { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
 .controls .label { color: var(--dim); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; font-family: var(--mono); }
 .pill {
   padding: 2px 10px; border: 1px solid var(--border); border-radius: 6px;
@@ -113,10 +113,23 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 .spark { position: absolute; right: 0; bottom: 0; width: 60%; height: 28px; opacity: .5; }
 
 @media (max-width: 1100px) { .stat-row { grid-template-columns: repeat(4, 1fr); } }
-@media (max-width: 680px) { .stat-row { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 680px) {
+  .stat-row { grid-template-columns: repeat(2, 1fr); }
+  /* reclaim edge width + shrink the fixed gauge/health columns so the dense
+     tables need far less (often no) horizontal scroll on a phone */
+  .wrap { padding: 16px 12px 48px; }
+  .gauge-col { width: 116px; }
+  .gauge { width: 64px; }
+  .hcol { width: 116px; }
+  .hstrip { width: 108px; }
+}
 
 /* ── panel ── */
 .panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; margin-bottom: 14px; }
+/* Tables are dense and nowrap; on narrow screens they'd blow out the page width.
+   Scroll them inside their own panel instead — scoped to table panels only so the
+   chart's hover tooltip (which overflows its panel by design) is never clipped. */
+.panel:has(> table.grid) { overflow-x: auto; }
 .p-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
 .p-title { font-size: 11px; text-transform: uppercase; letter-spacing: .07em; color: var(--dim); font-family: var(--mono); }
 .p-title::before { content: "▸ "; color: var(--accent); }

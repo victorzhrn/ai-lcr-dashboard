@@ -12,12 +12,14 @@ CREATE TABLE IF NOT EXISTS lcr_calls (
   ok            boolean NOT NULL,
   failed_over   boolean NOT NULL,
   latency_ms    integer NOT NULL,
+  ttft_ms       integer,
   input_tokens  integer NOT NULL,
   output_tokens integer NOT NULL,
   cost_usd      numeric(12,6) NOT NULL,
   baseline_usd  numeric(12,6) NOT NULL DEFAULT 0,
   attempts      jsonb NOT NULL
 );
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS ttft_ms integer;
 CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 `;
 

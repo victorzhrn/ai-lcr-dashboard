@@ -54,6 +54,12 @@ export function ensureSchema(): Promise<void> {
 }
 
 // One table, no content — metadata only. Idempotent; safe to run repeatedly.
+//
+// ttft_ms is NULLABLE on purpose — it's the forward/backward-compat seam: rows
+// written before this column existed stay NULL, and even going forward only
+// streaming calls carry a time-to-first-token (doGenerate and failed calls have
+// none). The ALTER backfills the column onto already-deployed tables, so an
+// existing dashboard picks it up on the next request without a manual migration.
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS lcr_calls (
   id            text PRIMARY KEY,
@@ -64,11 +70,13 @@ CREATE TABLE IF NOT EXISTS lcr_calls (
   ok            boolean NOT NULL,
   failed_over   boolean NOT NULL,
   latency_ms    integer NOT NULL,
+  ttft_ms       integer,
   input_tokens  integer NOT NULL,
   output_tokens integer NOT NULL,
   cost_usd      numeric(12,6) NOT NULL,
   baseline_usd  numeric(12,6) NOT NULL DEFAULT 0,
   attempts      jsonb NOT NULL
 );
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS ttft_ms integer;
 CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 `;

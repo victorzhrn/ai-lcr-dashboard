@@ -21,6 +21,7 @@ type CallRecord = {
   ok: boolean;
   failedOver: boolean;
   latencyMs: number;
+  ttftMs?: number; // streaming only; absent on older ai-lcr, doGenerate, and failed calls
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
@@ -65,8 +66,8 @@ export async function POST(req: Request) {
     const pool = getPool();
     await pool.query(
       `INSERT INTO lcr_calls
-         (id, project, model, winner, ok, failed_over, latency_ms, input_tokens, output_tokens, cost_usd, baseline_usd, attempts)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
+         (id, project, model, winner, ok, failed_over, latency_ms, ttft_ms, input_tokens, output_tokens, cost_usd, baseline_usd, attempts)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)
        ON CONFLICT (id) DO NOTHING`,
       [
         r.id,
@@ -76,6 +77,9 @@ export async function POST(req: Request) {
         r.ok,
         r.failedOver ?? false,
         r.latencyMs ?? 0,
+        // null (not 0) when absent — keeps "no TTFT" distinct from "0ms TTFT" so
+        // averages skip these rows instead of being dragged toward zero.
+        typeof r.ttftMs === "number" ? r.ttftMs : null,
         r.inputTokens ?? 0,
         r.outputTokens ?? 0,
         r.costUsd ?? 0,

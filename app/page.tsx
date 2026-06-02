@@ -136,6 +136,7 @@ function Stat({
   tone,
   spark,
   sparkTone,
+  hint,
 }: {
   label: string;
   value: React.ReactNode;
@@ -143,10 +144,12 @@ function Stat({
   tone?: "ok" | "warn" | "down";
   spark?: number[];
   sparkTone?: string;
+  /** Plain-language explainer shown on hover (native tooltip over the whole tile). */
+  hint?: string;
 }) {
   return (
-    <div className="stat">
-      <div className="s-label">{label}</div>
+    <div className="stat" title={hint}>
+      <div className={`s-label${hint ? " hinted" : ""}`}>{label}</div>
       <div className={`s-value${tone ? ` v-${tone}` : ""}`}>{value}</div>
       {sub && <div className="s-sub">{sub}</div>}
       {spark && <Sparkline data={spark} tone={sparkTone} />}
@@ -167,7 +170,13 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
   // Tone only when a number needs attention — healthy values stay neutral.
   // Save % is always a win (savePct is floored at 0 in queries) — green when
   // there's something saved, neutral at 0. Never red: low savings isn't a fault.
-  const foTone = m.failoverRate < 0.03 ? undefined : m.failoverRate < 0.08 ? "warn" : "down";
+  //
+  // Failover caps at warn (yellow), never down (red): a failover is a request
+  // that SURVIVED — the first provider failed but a fallback served it, so the
+  // user wasn't affected. Red is reserved for the one metric that means a user
+  // actually saw an error (Leaked), so red keeps its alarm value. Matches the
+  // Fleet table, which already colors failover yellow-only.
+  const foTone = m.failoverRate < 0.03 ? undefined : "warn";
   return (
     <div className="stat-row">
       <Stat
@@ -176,30 +185,60 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
         sub={<DeltaSub d={delta(m.savedUsd, prev.savedUsd)} />}
         spark={saved}
         sparkTone="var(--green)"
+        hint="What routing saved vs. sending every call to the priciest provider in its chain — same tokens, higher sticker price."
       />
-      <Stat label="Save %" value={m.savePct > 0 ? <span className="pos">{pct(m.savePct)}</span> : pct(m.savePct)} sub="vs direct" />
+      <Stat
+        label="Save %"
+        value={m.savePct > 0 ? <span className="pos">{pct(m.savePct)}</span> : pct(m.savePct)}
+        sub="vs direct"
+        hint="Saved as a share of that would-be direct cost."
+      />
       <Stat
         label="Spent"
         value={money(m.costUsd)}
         sub={<DeltaSub d={delta(m.costUsd, prev.costUsd)} />}
         spark={spend}
         sparkTone="var(--dim)"
+        hint="Actual spend across every call in this window."
       />
       <Stat
         label="Calls"
         value={compact(m.calls)}
         sub={<DeltaSub d={delta(m.calls, prev.calls)} />}
         spark={calls}
+        hint="Total requests routed in this window."
       />
-      <Stat label="Failover" value={pct(m.failoverRate)} sub={`${compact(m.caught)} caught`} tone={foTone} />
+      <Stat
+        label="Failover"
+        value={pct(m.failoverRate)}
+        sub={`${compact(m.caught)} caught`}
+        tone={foTone}
+        hint="Calls whose first-choice provider failed, so ai-lcr retried on a fallback. Almost all are 'caught' — the user still got a response. Shown in yellow, never red: the request survived."
+      />
       <Stat
         label="Leaked"
         value={m.failures}
-        sub={m.failures === 0 ? "clear" : "hit users"}
+        sub={m.failures === 0 ? "all caught" : "reached users"}
         tone={m.failures === 0 ? undefined : "down"}
+        hint="Calls where every provider failed, so the error reached the user — a failover that wasn't caught. The only failures users actually felt, which is why this is the metric that turns red."
       />
-      <Stat label="Tokens" value={compact(m.tokens)} sub="in + out" />
-      <Stat label="Avg latency" value={ms(m.avgLatencyMs)} />
+      <Stat
+        label="Tokens"
+        value={
+          <span className="dual" title={`${m.inputTokens.toLocaleString()} in · ${m.outputTokens.toLocaleString()} out`}>
+            {compact(m.inputTokens)}
+            <i>/</i>
+            {compact(m.outputTokens)}
+          </span>
+        }
+        sub="in / out"
+        hint="Input + output tokens across all calls, shown as in / out."
+      />
+      <Stat
+        label="Avg latency"
+        value={ms(m.avgLatencyMs)}
+        hint="Mean end-to-end time per call, including any failover retries."
+      />
     </div>
   );
 }
@@ -423,6 +462,8 @@ interface BreakdownRow {
   tokens: number;
   costPerCall: number;
   avgLatencyMs: number;
+  ttftMs: number | null;
+  tokensPerSec: number | null;
   savedUsd: number;
 }
 
@@ -453,6 +494,8 @@ function BreakdownTable({
             <th className="r">tokens</th>
             <th className="r">you/call</th>
             <th className="r">latency</th>
+            <th className="r" title="Time to first token — streaming calls only. — = no streaming sample in this window.">ttft</th>
+            <th className="r" title="Output throughput: output tokens ÷ generation time (latency − ttft), over streaming calls.">tok/s</th>
             <th className="r">saved</th>
           </tr>
         </thead>
@@ -470,6 +513,8 @@ function BreakdownTable({
               <td className="r dim">{compact(r.tokens)}</td>
               <td className="r">{money(r.costPerCall)}</td>
               <td className="r dim">{ms(r.avgLatencyMs)}</td>
+              <td className="r dim">{r.ttftMs == null ? "—" : ms(r.ttftMs)}</td>
+              <td className="r dim">{r.tokensPerSec == null ? "—" : `${Math.round(r.tokensPerSec)}/s`}</td>
               <td className="r pos">{money(r.savedUsd)}</td>
             </tr>
           ))}
@@ -487,6 +532,8 @@ const modelRows = (s: ModelStat[]): BreakdownRow[] =>
     tokens: m.tokens,
     costPerCall: m.costPerCall,
     avgLatencyMs: m.avgLatencyMs,
+    ttftMs: m.ttftMs,
+    tokensPerSec: m.tokensPerSec,
     savedUsd: m.savedUsd,
   }));
 

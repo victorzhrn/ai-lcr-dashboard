@@ -92,6 +92,8 @@ export interface Metrics {
   savePct: number;
   avgLatencyMs: number;
   tokens: number; // input + output, summed
+  inputTokens: number;
+  outputTokens: number;
 }
 
 export async function getMetrics(project: string, win: WindowKey, prev = false): Promise<Metrics> {
@@ -107,7 +109,9 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
         coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
         coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline,
         coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
-        coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
+        coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens,
+        coalesce(sum(input_tokens), 0)::bigint          AS input_tokens,
+        coalesce(sum(output_tokens), 0)::bigint         AS output_tokens
        FROM lcr_calls
       WHERE ${time}${clause}`,
     params,
@@ -130,6 +134,8 @@ export async function getMetrics(project: string, win: WindowKey, prev = false):
     savePct: r.baseline_usd > 0 ? savedUsd / r.baseline_usd : 0,
     avgLatencyMs: r.avg_latency ?? 0,
     tokens: Number(r.tokens ?? 0),
+    inputTokens: Number(r.input_tokens ?? 0),
+    outputTokens: Number(r.output_tokens ?? 0),
   };
 }
 
@@ -328,6 +334,13 @@ export interface ModelStat {
   tokens: number;
   costPerCall: number;
   avgLatencyMs: number;
+  // null when no call in the window carried a TTFT (all non-streaming, or only
+  // pre-ttft data) — the UI shows "—" rather than a misleading 0.
+  ttftMs: number | null;
+  // Output throughput from the streaming calls that have a TTFT: output tokens
+  // over generation time (latency − ttft). null when there's nothing to derive
+  // it from. See the comment on the query for why we exclude TTFT from the time.
+  tokensPerSec: number | null;
   savedUsd: number;
 }
 
@@ -340,6 +353,17 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
             coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
             coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
+            -- avg() skips NULLs, so this is the mean over streaming calls only;
+            -- NULL (→ "—" in the UI) when none of them carried a TTFT.
+            avg(ttft_ms)::float8                   AS ttft_ms,
+            -- Precise tokens/sec: total output tokens over total *generation*
+            -- time (latency − ttft, the part after the first token), across the
+            -- streaming calls that have a TTFT. Excluding TTFT from the time is
+            -- what makes it a true decode-rate, not a startup-diluted one.
+            -- latency_ms > ttft_ms guards a degenerate row; NULLIF guards /0.
+            (sum(output_tokens) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms))::float8
+              / NULLIF(sum(latency_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)
+              * 1000                               AS tokens_per_sec,
             coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
       WHERE ${since(win)}${clause}
@@ -355,6 +379,8 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
     tokens: Number(r.tokens ?? 0),
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
+    ttftMs: r.ttft_ms == null ? null : Number(r.ttft_ms),
+    tokensPerSec: r.tokens_per_sec == null ? null : Number(r.tokens_per_sec),
     savedUsd: Math.max(0, r.baseline - r.base_cost),
   }));
 }

@@ -168,6 +168,7 @@ table.grid td.bad { color: var(--red); font-weight: 600; }
 .tag.t-ok { background: rgba(43, 217, 107, .12); color: var(--green); }
 .tag.t-warn { background: rgba(227, 179, 65, .14); color: var(--yellow); }
 .tag.t-down { background: rgba(255, 92, 82, .14); color: var(--red); }
+.tag.t-muted { background: rgba(121, 131, 154, .12); color: var(--dim); }
 
 /* bar gauge */
 .gauge-col { width: 200px; }

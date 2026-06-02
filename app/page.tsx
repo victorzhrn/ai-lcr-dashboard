@@ -257,6 +257,21 @@ function HealthStrip({ buckets }: { buckets: (ProjectStatus | "none")[] }) {
   );
 }
 
+// Success rate as a tinted number. Same thresholds as the health buckets
+// (<2% fail = ok, <15% = warn, else down) so the % and the strip agree. Tooltip
+// spells out the raw ok/total so a small sample reads honestly.
+function SuccessRate({ attempts, failRate }: { attempts: number; failRate: number }) {
+  if (!attempts) return <td className="r dim">—</td>;
+  const ok = 1 - failRate;
+  const tone = failRate < 0.02 ? "pos" : failRate < 0.15 ? "warn" : "bad";
+  const okCount = Math.round(ok * attempts);
+  return (
+    <td className={`r ${tone}`} title={`${okCount}/${attempts} attempts ok · ${pct(failRate)} failed`}>
+      {pct(ok)}
+    </td>
+  );
+}
+
 // ── providers table (who served · cost · health), the provider axis ─────────
 interface ProviderRow {
   provider: string;
@@ -265,6 +280,8 @@ interface ProviderRow {
   tokens: number;
   costPerCall: number;
   savedUsd: number;
+  attempts: number; // total attempts on this provider (winner + failed-over-away)
+  failRate: number; // fraction of those attempts that errored
   buckets: (ProjectStatus | "none")[];
 }
 
@@ -274,10 +291,10 @@ interface ProviderRow {
 function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): ProviderRow[] {
   const m = new Map<string, ProviderRow>();
   for (const h of health) {
-    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, costPerCall: 0, savedUsd: 0, buckets: h.buckets });
+    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, costPerCall: 0, savedUsd: 0, attempts: h.attempts, failRate: h.failRate, buckets: h.buckets });
   }
   for (const s of stats) {
-    const base = m.get(s.provider) ?? { provider: s.provider, buckets: [] as (ProjectStatus | "none")[] };
+    const base = m.get(s.provider) ?? { provider: s.provider, attempts: 0, failRate: 0, buckets: [] as (ProjectStatus | "none")[] };
     m.set(s.provider, {
       ...base,
       provider: s.provider,
@@ -308,6 +325,7 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
             <th className="r">tokens</th>
             <th className="r">you/call</th>
             <th className="r">saved</th>
+            <th className="r">reliability</th>
             <th className="hcol">health</th>
           </tr>
         </thead>
@@ -325,6 +343,7 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
               <td className="r dim">{compact(r.tokens)}</td>
               <td className="r">{money(r.costPerCall)}</td>
               <td className="r pos">{money(r.savedUsd)}</td>
+              <SuccessRate attempts={r.attempts} failRate={r.failRate} />
               <td className="hcol">
                 <HealthStrip buckets={r.buckets} />
               </td>

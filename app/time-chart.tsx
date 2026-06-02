@@ -35,10 +35,12 @@ export function TimeChart({ series, win }: { series: Bucket[]; win: WindowKey })
     win === "7d" || win === "30d" ? `${dayLabel(series[i].t)} ${clock(series[i].t)}` : clock(series[i].t);
 
   const onMove = (e: React.MouseEvent<HTMLDivElement>) => {
-    if (n === 0) return;
     const rect = e.currentTarget.getBoundingClientRect();
+    if (n === 0 || rect.width === 0) return;
     const frac = (e.clientX - rect.left) / rect.width;
-    setHover(Math.max(0, Math.min(n - 1, Math.round(frac * (n - 1)))));
+    const i = Math.round(frac * (n - 1));
+    if (!Number.isFinite(i)) return;
+    setHover(Math.max(0, Math.min(n - 1, i)));
   };
 
   const leftPct = hover !== null ? (n > 1 ? (hover / (n - 1)) * 100 : 0) : 0;

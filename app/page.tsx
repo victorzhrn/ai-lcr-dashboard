@@ -23,6 +23,8 @@ import {
 } from "@/lib/queries";
 import { ensureSchema } from "@/lib/db";
 import { domainFor, monogram } from "@/lib/projects";
+import { CollapsibleLog } from "./collapsible-log";
+import { TimeChart } from "./time-chart";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -244,42 +246,6 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
 }
 
 // ── time-series chart (saved area + spend line) ─────────────────────────────
-function TimeChart({ series, win }: { series: Bucket[]; win: WindowKey }) {
-  const saved = series.map((b) => Math.max(0, b.baseline - b.baseCost));
-  const spend = series.map((b) => b.cost);
-  const max = Math.max(...saved, ...spend, 1e-9);
-  const w = 1000;
-  const h = 130;
-  const n = series.length;
-  const x = (i: number) => (n > 1 ? (i / (n - 1)) * w : 0);
-  const y = (v: number) => h - (v / max) * h;
-  const area = `0,${h} ${saved.map((v, i) => `${x(i)},${y(v)}`).join(" ")} ${w},${h}`;
-  const line = spend.map((v, i) => `${x(i)},${y(v)}`).join(" ");
-  const ticks = [0, Math.floor(n / 2), n - 1].filter((i, idx, a) => a.indexOf(i) === idx && i >= 0 && i < n);
-  const labelAt = (i: number) =>
-    win === "7d" || win === "30d" ? dayLabel(series[i].t) : clock(series[i].t);
-  return (
-    <div className="panel">
-      <div className="p-head">
-        <span className="p-title">Saved vs spent over time</span>
-        <span className="legend">
-          <i className="sw green" /> saved <i className="sw dim" /> spent
-        </span>
-      </div>
-      <svg className="chart" viewBox={`0 0 ${w} ${h}`} preserveAspectRatio="none">
-        <polygon points={area} fill="rgba(63,185,80,.16)" />
-        <polyline points={saved.map((v, i) => `${x(i)},${y(v)}`).join(" ")} fill="none" stroke="var(--green)" strokeWidth="1.5" vectorEffect="non-scaling-stroke" />
-        <polyline points={line} fill="none" stroke="var(--dim)" strokeWidth="1.5" strokeDasharray="3 3" vectorEffect="non-scaling-stroke" />
-      </svg>
-      <div className="axis">
-        {ticks.map((i) => (
-          <span key={i}>{labelAt(i)}</span>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 // ── inline health strip — per-row health over time, embedded as a column in the
 // project & provider tables (replaces the two standalone full-width timelines) ─
 function HealthStrip({ buckets }: { buckets: (ProjectStatus | "none")[] }) {
@@ -561,7 +527,7 @@ function EventsLog({
       {events.length === 0 ? (
         <div className="muted">No failovers in this window — every call served on the first provider.</div>
       ) : (
-        <div className="log">
+        <CollapsibleLog initial={20} step={30}>
           {events.map((e) => {
             const failed = e.attempts.filter((a) => !a.ok);
             const reasons = failed.map((a) => `${a.provider} ${a.errorClass ?? "error"}`).join(", ");
@@ -581,7 +547,7 @@ function EventsLog({
               </div>
             );
           })}
-        </div>
+        </CollapsibleLog>
       )}
     </div>
   );

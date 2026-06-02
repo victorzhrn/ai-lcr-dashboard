@@ -9,8 +9,7 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "db:init": "node scripts/init-db.mjs",
-    "db:provision:db9": "node scripts/provision-db9.mjs"
+    "db:init": "node scripts/init-db.mjs"
   },
   "dependencies": {
     "next": "^15.5.0",

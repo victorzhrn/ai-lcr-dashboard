@@ -36,8 +36,7 @@ It's a small Next.js + Postgres app — deploy anywhere Next runs. Vercel is one
 [![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/victorzhrn/ai-lcr-dashboard&env=DATABASE_URL)
 
 1. **Create the project** — click the button above (or import the repo in Vercel, or `npm run build && npm start` on any host).
-2. **Attach a Postgres → set `DATABASE_URL`.** Any Postgres works: [Neon](https://neon.tech), [Supabase](https://supabase.com), RDS, your own, or a [db9](https://db9.ai) instant database. Put the connection string in the project's `DATABASE_URL` env var.
-   - No database yet? Fastest path: `npm i get-db9 && npm run db:provision:db9` provisions a db9 one and prints the `DATABASE_URL` to paste in.
+2. **Add a Postgres → `DATABASE_URL` gets set.** In your new Vercel project: **Storage → Create Database → Neon** ([Neon Postgres on the Vercel Marketplace](https://vercel.com/marketplace/neon)). Vercel injects `DATABASE_URL` for you — nothing to copy-paste. Neon's free tier (scale-to-zero, auto-wakes on connect) is plenty for a dashboard. Any other Postgres works too ([Supabase](https://supabase.com), RDS, your own) — just set `DATABASE_URL` yourself.
 3. **That's it — the table auto-creates** on the first request (ingest or page load). No migration step, no auth to configure.
 4. **Point your apps at it** (next section).
 
@@ -72,20 +71,19 @@ The only required env per app is `LCR_INGEST_URL` (this deploy's URL); `LCR_PROJ
 
 | Var | Required | What |
 |-----|----------|------|
-| `DATABASE_URL` | yes | Any Postgres, or a db9 connection string. |
+| `DATABASE_URL` | yes | Any Postgres (Neon, Supabase, RDS, your own). |
 | `INGEST_KEY` | no | **Write door.** If set, `POST /api/ingest` requires `Authorization: Bearer <key>`. A leaked write key can write rows, not read them. |
 | `DASHBOARD_PASSWORD` | no | **Read door.** If set, viewing the dashboard requires HTTP Basic auth (any username, this password). Leave empty for an open single-user box. |
 
 ## How it's wired
 
 ```
-your app ──onCall(CallRecord)──▶ createHttpSink ──POST──▶ /api/ingest ──▶ Postgres/db9 ──▶ /
-                                  (fire-and-forget)        (write door)    lcr_calls       (read door)
+your app ──onCall(CallRecord)──▶ createHttpSink ──POST──▶ /api/ingest ──▶ Postgres ──▶ /
+                                  (fire-and-forget)        (write door)    lcr_calls    (read door)
 ```
 
 - **Idempotent ingest:** rows keyed by `CallRecord.id`, so fire-and-forget retries don't duplicate.
 - **Within one instance, `project` is a filter, not a security boundary** — the box is yours. Multi-user isolation only matters if you turn this into a shared service; this repo deliberately doesn't.
-- **db9 SQL note:** aggregation uses `GROUP BY` + `count(*) FILTER (...)` and inline interval literals (db9 rejects `WITHIN GROUP` and parameterized `::interval` casts).
 
 ## License
 

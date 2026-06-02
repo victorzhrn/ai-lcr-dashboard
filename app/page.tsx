@@ -522,11 +522,10 @@ function SetupNotice({ error }: { error: string }) {
   return (
     <div className="setup">
       <p>
-        <b>Storage not ready.</b> Set <code>DATABASE_URL</code> (any Postgres, or a <a href="https://db9.ai">db9</a>{" "}
-        connection string) and create the table:
+        <b>Storage not ready.</b> Set <code>DATABASE_URL</code> to any Postgres
+        (Neon, Supabase, RDS, your own) and create the table:
       </p>
-      <pre>{`npm run db:init          # any Postgres via DATABASE_URL
-npm run db:provision:db9 # or provision a db9 database in seconds`}</pre>
+      <pre>{`npm run db:init   # create the lcr_calls table (or it auto-creates on first use)`}</pre>
       <p style={{ fontSize: 12 }}>({error})</p>
     </div>
   );

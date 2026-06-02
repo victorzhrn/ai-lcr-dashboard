@@ -1,8 +1,7 @@
 import { getPool } from "./db";
 
-// Fixed window allowlist → inline interval literal. db9's SQL layer rejects
-// parameterized `::interval` casts, so we inline a literal from this map (never
-// user input → no injection).
+// Fixed window allowlist → inline interval literal from this map (never user
+// input → no injection), so the window is a constant in the SQL.
 export const WINDOWS = {
   "1h": "1 hour",
   "24h": "24 hours",
@@ -23,8 +22,7 @@ const WINDOWS_PREV = {
 
 // Bucket width (seconds) per window → ~12–30 buckets across the range. Used for
 // the time-series chart, sparklines, and the state timeline. We bucket on
-// epoch-floor (not date_trunc) so non-standard widths like 5min / 6h work and
-// it stays db9-safe.
+// epoch-floor (not date_trunc) so non-standard widths like 5min / 6h work.
 const BUCKET_SECONDS: Record<WindowKey, number> = {
   "1h": 300, // 5 min  → 12
   "24h": 3600, // 1 hour → 24
@@ -354,7 +352,7 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
 // Per-provider health over time — the provider analog of getProjectTimeline.
 // Computed in JS from `attempts` (every provider tried, not just the winner), so
 // a flaky provider shows red even when we failed over away from it. Sampled to
-// the most recent `sampleLimit` calls to bound cost (db9-safe: no jsonb unnest).
+// the most recent `sampleLimit` calls to bound cost (no jsonb unnest in SQL).
 export interface ProviderHealthRow {
   provider: string;
   attempts: number;

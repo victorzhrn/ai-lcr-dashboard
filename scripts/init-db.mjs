@@ -1,5 +1,5 @@
 // Create the lcr_calls table against whatever DATABASE_URL points at (any
-// Postgres, or a db9 connection string). Idempotent — safe to re-run.
+// Postgres: Neon, Supabase, RDS, local…). Idempotent — safe to re-run.
 import { Pool } from "pg";
 
 const SCHEMA = `
@@ -23,7 +23,7 @@ CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 
 const url = process.env.DATABASE_URL;
 if (!url) {
-  console.error("DATABASE_URL is not set (any Postgres, or a db9 connection string).");
+  console.error("DATABASE_URL is not set (any Postgres: Neon, Supabase, RDS, local…).");
   process.exit(1);
 }
 

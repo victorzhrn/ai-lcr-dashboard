@@ -1,15 +1,13 @@
 import { Pool } from "pg";
 
-// Any Postgres works via DATABASE_URL. db9 (https://db9.ai) is plain Postgres
-// over TLS — same driver, with instant/disposable provisioning if you don't
-// want to stand a database up yourself (see scripts/provision-db9.mjs).
+// Any Postgres works via DATABASE_URL (Neon, Supabase, RDS, local, …).
 // Reuse one pool across hot-reloads / serverless invocations.
 declare global {
   // eslint-disable-next-line no-var
   var __lcrPool: Pool | undefined;
 }
 
-// Hosted Postgres (Neon/Supabase/db9) needs TLS; a local/internal one usually
+// Hosted Postgres (Neon/Supabase/RDS) needs TLS; a local/internal one usually
 // has none and errors if we force ssl. Skip ssl for localhost; relax CA checks
 // otherwise. Override with PGSSLMODE=disable / require if you need to.
 function sslFor(url: string): false | { rejectUnauthorized: boolean } {
@@ -22,7 +20,7 @@ function sslFor(url: string): false | { rejectUnauthorized: boolean } {
 export function getPool(): Pool {
   const connectionString = process.env.DATABASE_URL;
   if (!connectionString) {
-    throw new Error("DATABASE_URL is not set (any Postgres, or a db9 connection string)");
+    throw new Error("DATABASE_URL is not set (any Postgres: Neon, Supabase, RDS, local…)");
   }
   if (!globalThis.__lcrPool) {
     globalThis.__lcrPool = new Pool({
@@ -30,9 +28,8 @@ export function getPool(): Pool {
       ssl: sslFor(connectionString),
       max: 3,
       idleTimeoutMillis: 10_000,
-      // Fail fast if the database is unreachable (e.g. a reclaimed db9 instance)
-      // instead of hanging ~16s per request before the page falls back to the
-      // setup notice. A keep-alive cron prevents reclamation in the first place.
+      // Fail fast if the database is unreachable instead of hanging ~16s per
+      // request before the page falls back to the setup notice.
       connectionTimeoutMillis: 8_000,
     });
   }

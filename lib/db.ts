@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS lcr_calls (
   cost_usd      numeric(12,6) NOT NULL,
   baseline_usd  numeric(12,6) NOT NULL DEFAULT 0,
   cached_saving_usd numeric(12,6) NOT NULL DEFAULT 0,
+  cached_input_tokens integer NOT NULL DEFAULT 0,
   attempts      jsonb NOT NULL
 );
 ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS ttft_ms integer;
@@ -84,5 +85,10 @@ ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS ttft_ms integer;
 -- caching is the provider's own benefit, not a routing saving. Older rows (and
 -- non-streaming/failed calls) stay 0, so summing is always safe.
 ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS cached_saving_usd numeric(12,6) NOT NULL DEFAULT 0;
+-- cached_input_tokens: input tokens the serving provider read from prompt cache
+-- (ai-lcr's cachedInputTokens). Always present when the provider reports caching
+-- — independent of pricing — so it powers a cache HIT-RATE signal even on legs
+-- with no cacheRead rate (where cached_saving_usd is 0). Older rows stay 0.
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS cached_input_tokens integer NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 `;

@@ -27,6 +27,7 @@ type CallRecord = {
   costUsd: number;
   baselineUsd?: number;
   cachedSavingUsd?: number; // prompt-cache discount on this call; absent on older ai-lcr / no-cache calls
+  cachedInputTokens?: number; // input tokens read from cache; present whenever the provider reports caching
 };
 
 function authorized(req: Request): boolean {
@@ -67,8 +68,8 @@ export async function POST(req: Request) {
     const pool = getPool();
     await pool.query(
       `INSERT INTO lcr_calls
-         (id, project, model, winner, ok, failed_over, latency_ms, ttft_ms, input_tokens, output_tokens, cost_usd, baseline_usd, cached_saving_usd, attempts)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+         (id, project, model, winner, ok, failed_over, latency_ms, ttft_ms, input_tokens, output_tokens, cost_usd, baseline_usd, cached_saving_usd, cached_input_tokens, attempts)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
        ON CONFLICT (id) DO NOTHING`,
       [
         r.id,
@@ -86,6 +87,7 @@ export async function POST(req: Request) {
         r.costUsd ?? 0,
         r.baselineUsd ?? 0,
         r.cachedSavingUsd ?? 0,
+        r.cachedInputTokens ?? 0,
         JSON.stringify(r.attempts ?? []),
       ],
     );

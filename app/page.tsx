@@ -397,7 +397,19 @@ function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): Pro
   return [...m.values()].sort((a, b) => b.calls - a.calls);
 }
 
-function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
+function ProviderTable({
+  rows,
+  note,
+  project,
+  win,
+  activeProvider,
+}: {
+  rows: ProviderRow[];
+  note?: string;
+  project: string;
+  win: WindowKey;
+  activeProvider: string;
+}) {
   const max = Math.max(...rows.map((r) => r.share), 1e-9);
   return (
     <div className="panel">
@@ -421,8 +433,18 @@ function ProviderTable({ rows, note }: { rows: ProviderRow[]; note?: string }) {
         </thead>
         <tbody>
           {rows.map((r) => (
-            <tr key={r.provider}>
-              <td>{r.provider}</td>
+            <tr key={r.provider} className="rowlink">
+              <td>
+                {/* clicking a provider row filters the whole view to it (keeps the
+                    current project + window); clicking the active one clears it */}
+                <a
+                  href={qs(project, win, r.provider === activeProvider ? "all" : r.provider)}
+                  className={`cell-link${r.provider === activeProvider ? " active" : ""}`}
+                >
+                  <ProviderIcon provider={r.provider} size={16} />
+                  <span className="pname">{r.provider}</span>
+                </a>
+              </td>
               <td className="gauge-col">
                 <span className="gauge">
                   <span className="gfill" style={{ width: `${(r.share / max) * 100}%` }} />
@@ -718,7 +740,7 @@ export default async function Page({
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
           <FleetTable fleet={fleet} timeline={timeline} win={win} provider={provider} />
-          {provs.length > 0 && <ProviderTable rows={provs} />}
+          {provs.length > 0 && <ProviderTable rows={provs} project="all" win={win} activeProvider={provider} />}
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
           <EventsLog events={events} win={win} scopeLabel={provider === "all" ? "" : `· ${provider}`} showProject />
         </>
@@ -735,7 +757,7 @@ export default async function Page({
         <>
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
-          <ProviderTable rows={provs} note="list/call & vetted — coming in P1" />
+          <ProviderTable rows={provs} note="list/call & vetted — coming in P1" project={project} win={win} activeProvider={provider} />
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
           <EventsLog
             events={events}
@@ -759,7 +781,7 @@ export default async function Page({
                 all providers), keeping only the current time window */}
             <a className="home" href={qs("all", win)} title="Back to all projects">
               <LcrLogo size={20} />
-              <span className="live" /> ai-lcr
+              ai-lcr
             </a>
             {project !== "all" && (
               <>

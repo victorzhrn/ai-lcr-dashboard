@@ -8,6 +8,9 @@
   --dim: #79839a;
   --green: #2bd96b;
   --green-soft: #3fb950;
+  /* cache saving — its own hue so it never blurs into the green routing-saving.
+     Teal reads as "savings, but a different kind" next to the green. */
+  --cache: #2dd4bf;
   --yellow: #e3b341;
   --red: #ff5c52;
   --accent: #4dd4ff;
@@ -42,6 +45,9 @@ header.top h1 {
 }
 header.top h1 .slash { color: var(--dim); font-weight: 400; }
 header.top h1 .hproj { display: inline-flex; align-items: center; gap: 7px; }
+header.top h1 .home { display: inline-flex; align-items: center; gap: 8px; color: inherit; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; transition: background .12s; }
+header.top h1 .home:hover { background: rgba(255, 255, 255, .05); }
+header.top h1 .home .logo { display: block; flex-shrink: 0; }
 header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); }
 
 /* window segmented control */
@@ -103,6 +109,11 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 .stat:hover .s-label.hinted { text-decoration-color: var(--dim); }
 .s-value { font-family: var(--mono); font-size: 23px; font-weight: 650; margin-top: 4px; line-height: 1.1; letter-spacing: -.01em; color: var(--text); }
 .s-value .pos { color: var(--green); }
+.s-value .cachev { color: var(--cache); }
+/* cache-tinted text anywhere (hit-rate sub, model cache column) */
+.cachev { color: var(--cache); }
+table.grid td.cachev { color: var(--cache); }
+.s-sub .cachev { color: var(--cache); }
 /* in/out token pairs are the widest tile value ("10.5M / 798.9k"); at 17px they
    overflowed the dense 9-col tile and the "out" half got clipped. Smaller font +
    tighter slash keeps both halves visible without truncation. */
@@ -140,6 +151,7 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 .legend.p1 { font-style: italic; opacity: .65; }
 .legend .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin: 0 1px 0 6px; }
 .legend .sw.green { background: var(--green); }
+.legend .sw.cache { background: var(--cache); }
 .legend .sw.yellow { background: var(--yellow); }
 .legend .sw.red { background: var(--red); }
 .legend .sw.dim { background: var(--dim); }
@@ -153,6 +165,7 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 .chart-cursor { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--border); pointer-events: none; transform: translateX(-0.5px); }
 .chart-dot { position: absolute; width: 7px; height: 7px; border-radius: 50%; pointer-events: none; transform: translate(-50%, -50%); border: 1.5px solid var(--panel); }
 .chart-dot.green { background: var(--green); }
+.chart-dot.cache { background: var(--cache); }
 .chart-dot.dim { background: var(--dim); }
 .chart-tip {
   position: absolute; top: 4px; pointer-events: none; z-index: 5;
@@ -168,6 +181,7 @@ header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); 
 .chart-tip .ct-row b { font-weight: 600; }
 .chart-tip .sw { display: inline-block; width: 9px; height: 9px; border-radius: 2px; margin-right: 6px; }
 .chart-tip .sw.green { background: var(--green); }
+.chart-tip .sw.cache { background: var(--cache); }
 .chart-tip .sw.dim { background: var(--dim); }
 
 /* ── state timeline ── */

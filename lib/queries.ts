@@ -357,6 +357,9 @@ export interface ModelStat {
   // it from. See the comment on the query for why we exclude TTFT from the time.
   tokensPerSec: number | null;
   savedUsd: number;
+  // share of input tokens this model read from prompt cache (cached / input).
+  // 0 when nothing cached — surfaces caching even where the $ saving is unpriced.
+  cacheHitRate: number;
 }
 
 export async function getModelStats(project: string, win: WindowKey): Promise<ModelStat[]> {
@@ -379,7 +382,9 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
             (sum(output_tokens) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms))::float8
               / NULLIF(sum(latency_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)
               * 1000                               AS tokens_per_sec,
-            coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
+            coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens,
+            coalesce(sum(cached_input_tokens), 0)::bigint          AS cached_input,
+            coalesce(sum(input_tokens), 0)::bigint                 AS input_toks
        FROM lcr_calls
       WHERE ${since(win)}${clause}
       GROUP BY ${MODEL_EXPR}
@@ -397,6 +402,7 @@ export async function getModelStats(project: string, win: WindowKey): Promise<Mo
     ttftMs: r.ttft_ms == null ? null : Number(r.ttft_ms),
     tokensPerSec: r.tokens_per_sec == null ? null : Number(r.tokens_per_sec),
     savedUsd: Math.max(0, r.baseline - r.base_cost),
+    cacheHitRate: r.input_toks > 0 ? Number(r.cached_input ?? 0) / Number(r.input_toks) : 0,
   }));
 }
 

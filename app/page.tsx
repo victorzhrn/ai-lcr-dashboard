@@ -451,6 +451,7 @@ interface BreakdownRow {
   ttftMs: number | null;
   tokensPerSec: number | null;
   savedUsd: number;
+  cacheHitRate?: number; // share of input tokens read from prompt cache; omitted on the provider axis
 }
 
 function BreakdownTable({
@@ -465,6 +466,7 @@ function BreakdownTable({
   note?: string;
 }) {
   const max = Math.max(...rows.map((r) => r.share), 1e-9);
+  const showCache = rows.some((r) => r.cacheHitRate !== undefined);
   return (
     <div className="panel">
       <div className="p-head">
@@ -482,6 +484,9 @@ function BreakdownTable({
             <th className="r">latency</th>
             <th className="r" title="Time to first token — streaming calls only. — = no streaming sample in this window.">ttft</th>
             <th className="r" title="Output throughput: output tokens ÷ generation time (latency − ttft), over streaming calls.">tok/s</th>
+            {showCache && (
+              <th className="r" title="Share of input tokens read from prompt cache (cached ÷ input). >0 means the provider is caching — even when Cache saved reads $0 because that route has no cacheRead rate.">cache</th>
+            )}
             <th className="r">saved</th>
           </tr>
         </thead>
@@ -501,6 +506,11 @@ function BreakdownTable({
               <td className="r dim">{ms(r.avgLatencyMs)}</td>
               <td className="r dim">{r.ttftMs == null ? "—" : ms(r.ttftMs)}</td>
               <td className="r dim">{r.tokensPerSec == null ? "—" : `${Math.round(r.tokensPerSec)}/s`}</td>
+              {showCache && (
+                <td className={`r ${r.cacheHitRate && r.cacheHitRate > 0 ? "pos" : "dim"}`}>
+                  {r.cacheHitRate && r.cacheHitRate > 0 ? pct(r.cacheHitRate) : "—"}
+                </td>
+              )}
               <td className="r pos">{money(r.savedUsd)}</td>
             </tr>
           ))}
@@ -521,6 +531,7 @@ const modelRows = (s: ModelStat[]): BreakdownRow[] =>
     ttftMs: m.ttftMs,
     tokensPerSec: m.tokensPerSec,
     savedUsd: m.savedUsd,
+    cacheHitRate: m.cacheHitRate,
   }));
 
 // ── failover events log ─────────────────────────────────────────────────────

@@ -202,8 +202,14 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
       <Stat
         label="Cache saved"
         value={m.cachedSavingUsd > 0 ? <span className="pos">{money(m.cachedSavingUsd)}</span> : money(m.cachedSavingUsd)}
-        sub={<DeltaSub d={delta(m.cachedSavingUsd, prev.cachedSavingUsd)} />}
-        hint="What prompt caching saved: cached input tokens billed at the provider's discounted cache-read rate instead of full input. Separate from routing — caching is the provider's own benefit (it happens with or without LCR), so it's never folded into Saved."
+        sub={
+          m.cachedInputTokens > 0 ? (
+            <span className={m.cacheHitRate > 0.2 ? "up" : undefined}>{pct(m.cacheHitRate)} input cached</span>
+          ) : (
+            <DeltaSub d={delta(m.cachedSavingUsd, prev.cachedSavingUsd)} />
+          )
+        }
+        hint="What prompt caching saved: cached input tokens billed at the provider's discounted cache-read rate instead of full input. The sub-line shows the cache HIT RATE (share of input tokens served from cache) — which can be >0 while the saving reads $0 if that route has no cacheRead rate configured (caching is happening, just not priced). Separate from routing — caching is the provider's own benefit, so it's never folded into Saved."
       />
       <Stat
         label="Spent"

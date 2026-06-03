@@ -42,6 +42,9 @@ header.top h1 {
 }
 header.top h1 .slash { color: var(--dim); font-weight: 400; }
 header.top h1 .hproj { display: inline-flex; align-items: center; gap: 7px; }
+header.top h1 .home { display: inline-flex; align-items: center; gap: 8px; color: inherit; border-radius: 6px; padding: 2px 4px; margin: -2px -4px; transition: background .12s; }
+header.top h1 .home:hover { background: rgba(255, 255, 255, .05); }
+header.top h1 .home .logo { display: block; flex-shrink: 0; }
 header.top .sub { color: var(--dim); font-size: 12px; font-family: var(--mono); }
 
 /* window segmented control */

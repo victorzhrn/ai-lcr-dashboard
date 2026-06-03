@@ -3,6 +3,8 @@ import {
   getTimeSeries,
   getProjectTimeline,
   getFleet,
+  getProjects,
+  getProviders,
   getProviderStats,
   getModelStats,
   getProviderHealth,
@@ -23,6 +25,7 @@ import {
 } from "@/lib/queries";
 import { ensureSchema } from "@/lib/db";
 import { domainFor, monogram } from "@/lib/projects";
+import { providerDomainFor } from "@/lib/providers";
 import { CollapsibleLog } from "./collapsible-log";
 import { TimeChart } from "./time-chart";
 
@@ -46,6 +49,42 @@ function ProjectIcon({ project, size = 18 }: { project: string; size?: number })
   );
 }
 
+// ── provider identity: same favicon-over-monogram treatment, so a provider pill
+// reads just like a project pill (lib/providers resolves the provider's domain) ──
+function ProviderIcon({ provider, size = 14 }: { provider: string; size?: number }) {
+  const domain = providerDomainFor(provider);
+  const { bg, initial } = monogram(provider);
+  return (
+    <span className="picon" style={{ width: size, height: size, background: bg, fontSize: Math.round(size * 0.52) }}>
+      {initial}
+      {domain && (
+        <span
+          className="pfav"
+          style={{ backgroundImage: `url(/api/favicon?domain=${encodeURIComponent(domain)})` }}
+        />
+      )}
+    </span>
+  );
+}
+
+// ── brand mark — the same routing-graph glyph as the favicon, inlined so the
+// header logo needs no extra request and scales crisply. ──
+function LcrLogo({ size = 20 }: { size?: number }) {
+  return (
+    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden className="logo">
+      <rect x="0.5" y="0.5" width="31" height="31" rx="7.5" fill="#0b1120" stroke="#273253" />
+      <g fill="none" strokeLinecap="round" strokeWidth="2.6">
+        <path d="M8 16 H15" stroke="#4fe39a" />
+        <path d="M15 16 C20 16 20 9.5 24 9.5" stroke="#4fe39a" />
+        <path d="M15 16 C20 16 20 22.5 24 22.5" stroke="#62a0ff" />
+      </g>
+      <circle cx="8" cy="16" r="3" fill="#4fe39a" />
+      <circle cx="24" cy="9.5" r="2.7" fill="#4fe39a" />
+      <circle cx="24" cy="22.5" r="2.3" fill="#62a0ff" />
+    </svg>
+  );
+}
+
 // ── formatting ──────────────────────────────────────────────────────────────
 const money = (n: number) => (n >= 1 ? `$${n.toFixed(2)}` : `$${n.toFixed(4)}`);
 const pct = (n: number) => `${(n * 100).toFixed(n < 0.1 && n > 0 ? 1 : 0)}%`;
@@ -57,8 +96,9 @@ function compact(n: number): string {
 function ms(n: number): string {
   return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`;
 }
-function qs(project: string, win: WindowKey): string {
-  return `?project=${encodeURIComponent(project)}&w=${win}`;
+function qs(project: string, win: WindowKey, provider = "all"): string {
+  const base = `?project=${encodeURIComponent(project)}&w=${win}`;
+  return provider && provider !== "all" ? `${base}&provider=${encodeURIComponent(provider)}` : base;
 }
 function clock(epochSec: number): string {
   const d = new Date(epochSec * 1000);
@@ -82,31 +122,57 @@ function delta(cur: number, prev: number): { text: string; up: boolean } | null 
 }
 
 // ── project selector (template var) ─────────────────────────────────────────
-function Controls({ projects, project, win }: { projects: string[]; project: string; win: WindowKey }) {
+function Controls({
+  projects,
+  providers,
+  project,
+  provider,
+  win,
+}: {
+  projects: string[];
+  providers: string[];
+  project: string;
+  provider: string;
+  win: WindowKey;
+}) {
   return (
     <div className="controls">
       <div className="group">
         <span className="label">project</span>
-        <a className={`pill${project === "all" ? " active" : ""}`} href={qs("all", win)}>
+        <a className={`pill${project === "all" ? " active" : ""}`} href={qs("all", win, provider)}>
           all
         </a>
         {projects.map((p) => (
-          <a key={p} className={`pill pill-p${project === p ? " active" : ""}`} href={qs(p, win)}>
+          <a key={p} className={`pill pill-p${project === p ? " active" : ""}`} href={qs(p, win, provider)}>
             <ProjectIcon project={p} size={14} />
             {p}
           </a>
         ))}
       </div>
+      {providers.length > 0 && (
+        <div className="group">
+          <span className="label">provider</span>
+          <a className={`pill${provider === "all" ? " active" : ""}`} href={qs(project, win, "all")}>
+            all
+          </a>
+          {providers.map((p) => (
+            <a key={p} className={`pill pill-p${provider === p ? " active" : ""}`} href={qs(project, win, p)}>
+              <ProviderIcon provider={p} size={14} />
+              {p}
+            </a>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
 
 // ── window selector — compact segmented control, top-right ──────────────────
-function WindowSelect({ project, win }: { project: string; win: WindowKey }) {
+function WindowSelect({ project, provider, win }: { project: string; provider: string; win: WindowKey }) {
   return (
     <div className="wsel">
       {(Object.keys(WINDOWS) as WindowKey[]).map((w) => (
-        <a key={w} className={`wopt${win === w ? " active" : ""}`} href={qs(project, w)}>
+        <a key={w} className={`wopt${win === w ? " active" : ""}`} href={qs(project, w, provider)}>
           {w}
         </a>
       ))}
@@ -387,7 +453,7 @@ function saveTone(p: number): string {
   return p > 0 ? "ok" : "muted";
 }
 
-function FleetTable({ fleet, timeline, win }: { fleet: FleetRow[]; timeline: TimelineRow[]; win: WindowKey }) {
+function FleetTable({ fleet, timeline, win, provider }: { fleet: FleetRow[]; timeline: TimelineRow[]; win: WindowKey; provider: string }) {
   const health = new Map(timeline.map((t) => [t.project, t.buckets]));
   return (
     <div className="panel">
@@ -413,7 +479,7 @@ function FleetTable({ fleet, timeline, win }: { fleet: FleetRow[]; timeline: Tim
             return (
               <tr key={f.project} className="rowlink">
                 <td>
-                  <a href={qs(f.project, win)} className="cell-link">
+                  <a href={qs(f.project, win, provider)} className="cell-link">
                     <span className={`dot ${s}`} />
                     <ProjectIcon project={f.project} size={16} />
                     <span className="pname">{f.project}</span>
@@ -608,61 +674,75 @@ createLCR({
 export default async function Page({
   searchParams,
 }: {
-  searchParams: Promise<{ project?: string; w?: string }>;
+  searchParams: Promise<{ project?: string; w?: string; provider?: string }>;
 }) {
   const sp = await searchParams;
   const win = asWindow(sp.w);
   const project = sp.project ?? "all";
+  const provider = sp.provider ?? "all";
 
   let body: React.ReactNode;
   let projects: string[] = [];
+  let providers: string[] = [];
 
   try {
     await ensureSchema(); // fresh deploy: create the table so we show "no calls yet", not a DB error
-    const fleet = await getFleet(win);
-    projects = fleet.map((f) => f.project);
+    // Pill lists are the full window-wide sets, independent of the active filter
+    // (so picking one never hides the others). Fleet is provider-scoped.
+    const [projectList, providerList, fleet] = await Promise.all([
+      getProjects(win),
+      getProviders(win),
+      getFleet(win, provider),
+    ]);
+    projects = projectList;
+    providers = providerList;
     const [metrics, prev, series] = await Promise.all([
-      getMetrics(project, win),
-      getMetrics(project, win, true),
-      getTimeSeries(project, win),
+      getMetrics(project, win, false, provider),
+      getMetrics(project, win, true, provider),
+      getTimeSeries(project, win, provider),
     ]);
 
-    if (metrics.calls === 0 && fleet.length === 0) {
+    if (metrics.calls === 0 && fleet.length === 0 && projects.length === 0) {
       body = <EmptyNotice />;
     } else if (project === "all") {
       const [timeline, provStats, provHealth, models, events] = await Promise.all([
-        getProjectTimeline(win),
-        getProviderStats("all", win),
-        getProviderHealth("all", win),
-        getModelStats("all", win),
-        getFailoverEvents("all", win),
+        getProjectTimeline(win, provider),
+        getProviderStats("all", win, provider),
+        getProviderHealth("all", win, 8000, provider),
+        getModelStats("all", win, provider),
+        getFailoverEvents("all", win, 40, provider),
       ]);
-      const providers = mergeProviders(provStats, provHealth);
+      const provs = mergeProviders(provStats, provHealth);
       body = (
         <>
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
-          <FleetTable fleet={fleet} timeline={timeline} win={win} />
-          {providers.length > 0 && <ProviderTable rows={providers} />}
+          <FleetTable fleet={fleet} timeline={timeline} win={win} provider={provider} />
+          {provs.length > 0 && <ProviderTable rows={provs} />}
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
-          <EventsLog events={events} win={win} scopeLabel="" showProject />
+          <EventsLog events={events} win={win} scopeLabel={provider === "all" ? "" : `· ${provider}`} showProject />
         </>
       );
     } else {
       const [provStats, provHealth, models, events] = await Promise.all([
-        getProviderStats(project, win),
-        getProviderHealth(project, win),
-        getModelStats(project, win),
-        getFailoverEvents(project, win),
+        getProviderStats(project, win, provider),
+        getProviderHealth(project, win, 8000, provider),
+        getModelStats(project, win, provider),
+        getFailoverEvents(project, win, 40, provider),
       ]);
-      const providers = mergeProviders(provStats, provHealth);
+      const provs = mergeProviders(provStats, provHealth);
       body = (
         <>
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
-          <ProviderTable rows={providers} note="list/call & vetted — coming in P1" />
+          <ProviderTable rows={provs} note="list/call & vetted — coming in P1" />
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
-          <EventsLog events={events} win={win} scopeLabel={`· ${project}`} showProject={false} />
+          <EventsLog
+            events={events}
+            win={win}
+            scopeLabel={`· ${project}${provider === "all" ? "" : ` · ${provider}`}`}
+            showProject={false}
+          />
         </>
       );
     }
@@ -675,7 +755,12 @@ export default async function Page({
       <header className="top">
         <div className="brand">
           <h1>
-            <span className="live" /> ai-lcr
+            {/* clicking the brand returns to the default home view (all projects,
+                all providers), keeping only the current time window */}
+            <a className="home" href={qs("all", win)} title="Back to all projects">
+              <LcrLogo size={20} />
+              <span className="live" /> ai-lcr
+            </a>
             {project !== "all" && (
               <>
                 <span className="slash">/</span>
@@ -684,12 +769,20 @@ export default async function Page({
                 </span>
               </>
             )}
+            {provider !== "all" && (
+              <>
+                <span className="slash">·</span>
+                <span className="hproj">
+                  <ProviderIcon provider={provider} size={16} /> {provider}
+                </span>
+              </>
+            )}
           </h1>
           <span className="sub">least-cost routing · savings &amp; failover health across every provider</span>
         </div>
-        <WindowSelect project={project} win={win} />
+        <WindowSelect project={project} provider={provider} win={win} />
       </header>
-      <Controls projects={projects} project={project} win={win} />
+      <Controls projects={projects} providers={providers} project={project} provider={provider} win={win} />
       {body}
     </main>
   );

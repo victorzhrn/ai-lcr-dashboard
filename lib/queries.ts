@@ -188,6 +188,7 @@ export interface Bucket {
   cost: number; // total spend (every call)
   baseline: number; // baseline of calls that carry one
   baseCost: number; // cost of those same baseline-bearing calls — so saved = max(0, baseline - baseCost)
+  cachedSaving: number; // prompt-cache discount in this bucket (own series, own colour)
   calls: number;
 }
 
@@ -199,6 +200,7 @@ export async function getTimeSeries(project: string, win: WindowKey, provider?: 
             coalesce(sum(cost_usd), 0)::float8     AS cost,
             coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
             coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
+            coalesce(sum(cached_saving_usd), 0)::float8 AS cached_saving,
             count(*)::int                          AS calls
        FROM lcr_calls
       WHERE ${since(win)}${clause}
@@ -206,11 +208,12 @@ export async function getTimeSeries(project: string, win: WindowKey, provider?: 
       ORDER BY bucket`,
     params,
   );
-  const by = new Map<number, { cost: number; baseline: number; baseCost: number; calls: number }>();
-  for (const r of rows) by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, baseCost: r.base_cost, calls: r.calls });
+  const by = new Map<number, { cost: number; baseline: number; baseCost: number; cachedSaving: number; calls: number }>();
+  for (const r of rows)
+    by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, baseCost: r.base_cost, cachedSaving: r.cached_saving, calls: r.calls });
   return bucketAxis(win).map((t) => {
     const r = by.get(t);
-    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, baseCost: r?.baseCost ?? 0, calls: r?.calls ?? 0 };
+    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, baseCost: r?.baseCost ?? 0, cachedSaving: r?.cachedSaving ?? 0, calls: r?.calls ?? 0 };
   });
 }
 
@@ -342,6 +345,7 @@ export interface ProviderStat {
   costPerCall: number;
   avgLatencyMs: number;
   savedUsd: number;
+  cacheHitRate: number; // share of this provider's input tokens served from cache
   tokens: number; // input + output, summed over calls this provider served
 }
 
@@ -354,6 +358,8 @@ export async function getProviderStats(project: string, win: WindowKey, provider
             coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
             coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
+            coalesce(sum(cached_input_tokens), 0)::bigint AS cached_input,
+            coalesce(sum(input_tokens), 0)::bigint        AS input_toks,
             coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
       WHERE ${since(win)}${clause}
@@ -370,6 +376,7 @@ export async function getProviderStats(project: string, win: WindowKey, provider
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
     savedUsd: Math.max(0, r.baseline - r.base_cost),
+    cacheHitRate: r.input_toks > 0 ? Number(r.cached_input ?? 0) / Number(r.input_toks) : 0,
     tokens: Number(r.tokens ?? 0),
   }));
 }
@@ -381,6 +388,7 @@ export interface ModelStat {
   calls: number;
   share: number;
   tokens: number;
+  spentUsd: number; // total cost_usd across this model's calls — the budget view
   costPerCall: number;
   avgLatencyMs: number;
   // null when no call in the window carried a TTFT (all non-streaming, or only
@@ -391,6 +399,7 @@ export interface ModelStat {
   // it from. See the comment on the query for why we exclude TTFT from the time.
   tokensPerSec: number | null;
   savedUsd: number;
+  cacheHitRate: number; // share of this model's input tokens served from prompt cache
 }
 
 export async function getModelStats(project: string, win: WindowKey, provider?: string): Promise<ModelStat[]> {
@@ -413,6 +422,8 @@ export async function getModelStats(project: string, win: WindowKey, provider?: 
             (sum(output_tokens) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms))::float8
               / NULLIF(sum(latency_ms - ttft_ms) FILTER (WHERE ttft_ms IS NOT NULL AND latency_ms > ttft_ms), 0)
               * 1000                               AS tokens_per_sec,
+            coalesce(sum(cached_input_tokens), 0)::bigint AS cached_input,
+            coalesce(sum(input_tokens), 0)::bigint        AS input_toks,
             coalesce(sum(input_tokens + output_tokens), 0)::bigint AS tokens
        FROM lcr_calls
       WHERE ${since(win)}${clause}
@@ -426,11 +437,13 @@ export async function getModelStats(project: string, win: WindowKey, provider?: 
     calls: r.calls,
     share: r.calls / total,
     tokens: Number(r.tokens ?? 0),
+    spentUsd: r.cost,
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
     ttftMs: r.ttft_ms == null ? null : Number(r.ttft_ms),
     tokensPerSec: r.tokens_per_sec == null ? null : Number(r.tokens_per_sec),
     savedUsd: Math.max(0, r.baseline - r.base_cost),
+    cacheHitRate: r.input_toks > 0 ? Number(r.cached_input ?? 0) / Number(r.input_toks) : 0,
   }));
 }
 

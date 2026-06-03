@@ -267,10 +267,10 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
       />
       <Stat
         label="Cache saved"
-        value={m.cachedSavingUsd > 0 ? <span className="pos">{money(m.cachedSavingUsd)}</span> : money(m.cachedSavingUsd)}
+        value={<span className="cachev">{money(m.cachedSavingUsd)}</span>}
         sub={
           m.cachedInputTokens > 0 ? (
-            <span className={m.cacheHitRate > 0.2 ? "up" : undefined}>{pct(m.cacheHitRate)} input cached</span>
+            <span className="cachev">{pct(m.cacheHitRate)} input cached</span>
           ) : (
             <DeltaSub d={delta(m.cachedSavingUsd, prev.cachedSavingUsd)} />
           )
@@ -368,6 +368,7 @@ interface ProviderRow {
   spentUsd: number; // total cost on this provider
   costPerCall: number;
   savedUsd: number;
+  cacheHitRate: number; // share of this provider's input tokens served from cache
   attempts: number; // total attempts on this provider (winner + failed-over-away)
   failRate: number; // fraction of those attempts that errored
   buckets: (ProjectStatus | "none")[];
@@ -379,7 +380,7 @@ interface ProviderRow {
 function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): ProviderRow[] {
   const m = new Map<string, ProviderRow>();
   for (const h of health) {
-    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, spentUsd: 0, costPerCall: 0, savedUsd: 0, attempts: h.attempts, failRate: h.failRate, buckets: h.buckets });
+    m.set(h.provider, { provider: h.provider, share: 0, calls: 0, tokens: 0, spentUsd: 0, costPerCall: 0, savedUsd: 0, cacheHitRate: 0, attempts: h.attempts, failRate: h.failRate, buckets: h.buckets });
   }
   for (const s of stats) {
     const base = m.get(s.provider) ?? { provider: s.provider, attempts: 0, failRate: 0, buckets: [] as (ProjectStatus | "none")[] };
@@ -392,6 +393,7 @@ function mergeProviders(stats: ProviderStat[], health: ProviderHealthRow[]): Pro
       spentUsd: s.spentUsd,
       costPerCall: s.costPerCall,
       savedUsd: s.savedUsd,
+      cacheHitRate: s.cacheHitRate,
     } as ProviderRow);
   }
   return [...m.values()].sort((a, b) => b.calls - a.calls);
@@ -427,6 +429,7 @@ function ProviderTable({
             <th className="r">you/call</th>
             <th className="r">spent</th>
             <th className="r">saved</th>
+            <th className="r" title="Share of this provider's input tokens served from prompt cache (cached ÷ input).">cache</th>
             <th className="r">reliability</th>
             <th className="hcol">health</th>
           </tr>
@@ -456,6 +459,7 @@ function ProviderTable({
               <td className="r">{money(r.costPerCall)}</td>
               <td className="r">{money(r.spentUsd)}</td>
               <td className="r pos">{money(r.savedUsd)}</td>
+              <td className={`r ${r.cacheHitRate > 0 ? "cachev" : "dim"}`}>{r.cacheHitRate > 0 ? pct(r.cacheHitRate) : "—"}</td>
               <SuccessRate attempts={r.attempts} failRate={r.failRate} />
               <td className="hcol">
                 <HealthStrip buckets={r.buckets} />
@@ -534,11 +538,13 @@ interface BreakdownRow {
   share: number;
   calls: number;
   tokens: number;
+  spentUsd: number;
   costPerCall: number;
   avgLatencyMs: number;
   ttftMs: number | null;
   tokensPerSec: number | null;
   savedUsd: number;
+  cacheHitRate?: number; // share of input read from cache; omitted on the provider axis
 }
 
 function BreakdownTable({
@@ -553,6 +559,7 @@ function BreakdownTable({
   note?: string;
 }) {
   const max = Math.max(...rows.map((r) => r.share), 1e-9);
+  const showCache = rows.some((r) => r.cacheHitRate !== undefined);
   return (
     <div className="panel">
       <div className="p-head">
@@ -567,9 +574,13 @@ function BreakdownTable({
             <th className="r">calls</th>
             <th className="r">tokens</th>
             <th className="r">you/call</th>
+            <th className="r">spent</th>
             <th className="r">latency</th>
             <th className="r" title="Time to first token — streaming calls only. — = no streaming sample in this window.">ttft</th>
             <th className="r" title="Output throughput: output tokens ÷ generation time (latency − ttft), over streaming calls.">tok/s</th>
+            {showCache && (
+              <th className="r" title="Share of input tokens served from prompt cache (cached ÷ input). >0 means caching is working even when the $ saving line reads near-zero.">cache</th>
+            )}
             <th className="r">saved</th>
           </tr>
         </thead>
@@ -586,9 +597,15 @@ function BreakdownTable({
               <td className="r">{compact(r.calls)}</td>
               <td className="r dim">{compact(r.tokens)}</td>
               <td className="r">{money(r.costPerCall)}</td>
+              <td className="r">{money(r.spentUsd)}</td>
               <td className="r dim">{ms(r.avgLatencyMs)}</td>
               <td className="r dim">{r.ttftMs == null ? "—" : ms(r.ttftMs)}</td>
               <td className="r dim">{r.tokensPerSec == null ? "—" : `${Math.round(r.tokensPerSec)}/s`}</td>
+              {showCache && (
+                <td className={`r ${r.cacheHitRate && r.cacheHitRate > 0 ? "cachev" : "dim"}`}>
+                  {r.cacheHitRate && r.cacheHitRate > 0 ? pct(r.cacheHitRate) : "—"}
+                </td>
+              )}
               <td className="r pos">{money(r.savedUsd)}</td>
             </tr>
           ))}
@@ -604,11 +621,13 @@ const modelRows = (s: ModelStat[]): BreakdownRow[] =>
     share: m.share,
     calls: m.calls,
     tokens: m.tokens,
+    spentUsd: m.spentUsd,
     costPerCall: m.costPerCall,
     avgLatencyMs: m.avgLatencyMs,
     ttftMs: m.ttftMs,
     tokensPerSec: m.tokensPerSec,
     savedUsd: m.savedUsd,
+    cacheHitRate: m.cacheHitRate,
   }));
 
 // ── failover events log ─────────────────────────────────────────────────────

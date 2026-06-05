@@ -332,7 +332,7 @@ export async function getFleet(win: WindowKey, provider?: string): Promise<Fleet
         topProviderPct: t && r.calls > 0 ? t.calls / r.calls : 0,
       };
     })
-    .sort((a, b) => b.savedUsd - a.savedUsd);
+    .sort((a, b) => b.calls - a.calls);
 }
 
 // ── provider table (project drill-down: who served / what it cost) ──────────

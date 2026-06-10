@@ -421,6 +421,7 @@ function ProviderTable({
         <span className="p-title">Providers · who served</span>
         {note && <span className="legend p1">{note}</span>}
       </div>
+      <div className="tscroll">
       <table className="grid">
         <thead>
           <tr>
@@ -457,7 +458,7 @@ function ProviderTable({
                 <span className="gpct">{pct(r.share)}</span>
               </td>
               <td className="r">{compact(r.calls)}</td>
-              <td className="r dim">{compact(r.tokens)}</td>
+              <td className="r dim">{r.tokens > 0 ? compact(r.tokens) : "—"}</td>
               <td className="r">{money(r.costPerCall)}</td>
               <td className="r">{money(r.spentUsd)}</td>
               <td className="r pos">{money(r.savedUsd)}</td>
@@ -470,6 +471,7 @@ function ProviderTable({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -488,6 +490,7 @@ function FleetTable({ fleet, timeline, win, provider }: { fleet: FleetRow[]; tim
       <div className="p-head">
         <span className="p-title">Projects</span>
       </div>
+      <div className="tscroll">
       <table className="grid">
         <thead>
           <tr>
@@ -529,6 +532,7 @@ function FleetTable({ fleet, timeline, win, provider }: { fleet: FleetRow[]; tim
           })}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }
@@ -571,8 +575,9 @@ function BreakdownTable({
     <div className="panel">
       <div className="p-head">
         <span className="p-title">{title}</span>
-        {note && <span className="legend p1">{note}</span>}
+        <span className="legend">{rows.length} {label}{rows.length === 1 ? "" : "s"}{note ? ` · ${note}` : ""}</span>
       </div>
+      <div className="tscroll">
       <table className="grid">
         <thead>
           <tr>
@@ -608,7 +613,7 @@ function BreakdownTable({
                 <span className="gpct">{pct(r.share)}</span>
               </td>
               <td className="r">{compact(r.calls)}</td>
-              <td className="r dim">{compact(r.tokens)}</td>
+              <td className="r dim">{r.tokens > 0 ? compact(r.tokens) : "—"}</td>
               <td className="r">{money(r.costPerCall)}</td>
               {showUnit && (
                 <td className="r dim">{r.unitCost ? `${money(r.unitCost.usd)}${r.unitCost.label}` : "—"}</td>
@@ -627,6 +632,7 @@ function BreakdownTable({
           ))}
         </tbody>
       </table>
+      </div>
     </div>
   );
 }

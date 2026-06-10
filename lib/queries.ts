@@ -431,7 +431,7 @@ export async function getModelStats(project: string, win: WindowKey, provider?: 
        FROM lcr_calls
       WHERE ${since(win)}${clause}
       GROUP BY ${MODEL_EXPR}
-      ORDER BY calls DESC`,
+      ORDER BY cost DESC, calls DESC`,
     params,
   );
   const total = rows.reduce((s, r) => s + r.calls, 0) || 1;

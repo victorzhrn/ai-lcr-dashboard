@@ -258,3 +258,8 @@ table.grid td.bad { color: var(--red); font-weight: 600; }
 .empty, .setup { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 24px; color: var(--dim); }
 .setup code, .empty code { color: var(--accent); }
 pre { background: var(--panel-2); border: 1px solid var(--border); border-radius: 8px; padding: 14px; overflow: auto; color: var(--text); font-family: var(--mono); }
+
+/* ── modality chip (image / video) next to a model name ── */
+.mchip { margin-left: 8px; padding: 1px 6px; border-radius: 5px; font-size: 10px; font-family: var(--mono); text-transform: uppercase; letter-spacing: .04em; vertical-align: 1px; }
+.mchip.m-image { background: rgba(98, 160, 255, .14); color: #62a0ff; }
+.mchip.m-video { background: rgba(196, 130, 255, .14); color: #c482ff; }

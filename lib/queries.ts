@@ -142,7 +142,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false, 
         count(*) FILTER (WHERE NOT ok)::int             AS failures,
         coalesce(sum(cost_usd), 0)::float8              AS cost_usd,
         coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
-        coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline,
+        coalesce(sum(greatest(baseline_usd - cost_usd, 0)) FILTER (WHERE baseline_usd > 0), 0)::float8 AS saved_usd,
         coalesce(sum(cached_saving_usd), 0)::float8     AS cached_saving,
         coalesce(sum(cached_input_tokens), 0)::bigint   AS cached_input_tokens,
         coalesce(avg(latency_ms), 0)::float8            AS avg_latency,
@@ -156,11 +156,11 @@ export async function getMetrics(project: string, win: WindowKey, prev = false, 
   );
   const r = rows[0] ?? {};
   const calls = r.calls ?? 0;
-  // Savings only counts calls that carry a baseline (baseline_usd > 0). ai-lcr
-  // reports a baseline for media routing but not text, so unbaselined calls have
-  // cost but no baseline — summing them in would drag net savings below zero and
-  // hide real savings. SPENT (cost_usd) still counts every call.
-  const savedUsd = Math.max(0, (r.baseline_usd ?? 0) - (r.cost_with_baseline ?? 0));
+  // Savings only counts calls that carry a baseline (baseline_usd > 0), and is
+  // clamped PER ROW (greatest(baseline − cost, 0) in SQL): one mispriced or
+  // pre-0.6 row whose baseline undershoots its cost must not eat the real
+  // savings of every other call in the sum. SPENT (cost_usd) counts every call.
+  const savedUsd = r.saved_usd ?? 0;
   return {
     calls,
     failovers: r.failovers ?? 0,
@@ -186,8 +186,7 @@ export async function getMetrics(project: string, win: WindowKey, prev = false, 
 export interface Bucket {
   t: number; // bucket start, epoch seconds
   cost: number; // total spend (every call)
-  baseline: number; // baseline of calls that carry one
-  baseCost: number; // cost of those same baseline-bearing calls — so saved = max(0, baseline - baseCost)
+  saved: number; // routing saving, clamped per row: Σ greatest(baseline − cost, 0)
   cachedSaving: number; // prompt-cache discount in this bucket (own series, own colour)
   calls: number;
 }
@@ -198,8 +197,7 @@ export async function getTimeSeries(project: string, win: WindowKey, provider?: 
   const { rows } = await getPool().query(
     `SELECT (floor(extract(epoch from ts) / ${sec}) * ${sec})::bigint AS bucket,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
-            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
+            coalesce(sum(greatest(baseline_usd - cost_usd, 0)) FILTER (WHERE baseline_usd > 0), 0)::float8 AS saved,
             coalesce(sum(cached_saving_usd), 0)::float8 AS cached_saving,
             count(*)::int                          AS calls
        FROM lcr_calls
@@ -208,12 +206,12 @@ export async function getTimeSeries(project: string, win: WindowKey, provider?: 
       ORDER BY bucket`,
     params,
   );
-  const by = new Map<number, { cost: number; baseline: number; baseCost: number; cachedSaving: number; calls: number }>();
+  const by = new Map<number, { cost: number; saved: number; cachedSaving: number; calls: number }>();
   for (const r of rows)
-    by.set(Number(r.bucket), { cost: r.cost, baseline: r.baseline, baseCost: r.base_cost, cachedSaving: r.cached_saving, calls: r.calls });
+    by.set(Number(r.bucket), { cost: r.cost, saved: r.saved, cachedSaving: r.cached_saving, calls: r.calls });
   return bucketAxis(win).map((t) => {
     const r = by.get(t);
-    return { t, cost: r?.cost ?? 0, baseline: r?.baseline ?? 0, baseCost: r?.baseCost ?? 0, cachedSaving: r?.cachedSaving ?? 0, calls: r?.calls ?? 0 };
+    return { t, cost: r?.cost ?? 0, saved: r?.saved ?? 0, cachedSaving: r?.cachedSaving ?? 0, calls: r?.calls ?? 0 };
   });
 }
 
@@ -295,7 +293,7 @@ export async function getFleet(win: WindowKey, provider?: string): Promise<Fleet
             count(*) FILTER (WHERE NOT ok)::int      AS failures,
             coalesce(sum(cost_usd), 0)::float8       AS cost_usd,
             coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline_usd,
-            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS cost_with_baseline
+            coalesce(sum(greatest(baseline_usd - cost_usd, 0)) FILTER (WHERE baseline_usd > 0), 0)::float8 AS saved_usd
        FROM lcr_calls
       WHERE ${since(win)}${clause}
       GROUP BY project`,
@@ -317,7 +315,7 @@ export async function getFleet(win: WindowKey, provider?: string): Promise<Fleet
 
   return totals.rows
     .map((r): FleetRow => {
-      const saved = Math.max(0, r.baseline_usd - r.cost_with_baseline);
+      const saved = r.saved_usd ?? 0;
       const t = top.get(r.project);
       return {
         project: r.project,
@@ -332,7 +330,7 @@ export async function getFleet(win: WindowKey, provider?: string): Promise<Fleet
         topProviderPct: t && r.calls > 0 ? t.calls / r.calls : 0,
       };
     })
-    .sort((a, b) => b.savedUsd - a.savedUsd);
+    .sort((a, b) => b.calls - a.calls);
 }
 
 // ── provider table (project drill-down: who served / what it cost) ──────────
@@ -355,8 +353,7 @@ export async function getProviderStats(project: string, win: WindowKey, provider
     `SELECT ${PROVIDER_EXPR} AS provider,
             count(*)::int                       AS calls,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
-            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
+            coalesce(sum(greatest(baseline_usd - cost_usd, 0)) FILTER (WHERE baseline_usd > 0), 0)::float8 AS saved,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
             coalesce(sum(cached_input_tokens), 0)::bigint AS cached_input,
             coalesce(sum(input_tokens), 0)::bigint        AS input_toks,
@@ -375,7 +372,7 @@ export async function getProviderStats(project: string, win: WindowKey, provider
     spentUsd: r.cost,
     costPerCall: r.calls > 0 ? r.cost / r.calls : 0,
     avgLatencyMs: r.avg_latency,
-    savedUsd: Math.max(0, r.baseline - r.base_cost),
+    savedUsd: r.saved ?? 0,
     cacheHitRate: r.input_toks > 0 ? Number(r.cached_input ?? 0) / Number(r.input_toks) : 0,
     tokens: Number(r.tokens ?? 0),
   }));
@@ -400,6 +397,10 @@ export interface ModelStat {
   tokensPerSec: number | null;
   savedUsd: number;
   cacheHitRate: number; // share of this model's input tokens served from prompt cache
+  // Media axes (ai-lcr 0.6 records; null/0 on text models and pre-0.6 rows):
+  modality: string | null; // 'image' | 'video'
+  seconds: number; // Σ usage.seconds — per-second economics ($/s = spent/seconds)
+  outputs: number; // Σ usage.outputs — per-output economics ($/img, $/clip)
 }
 
 export async function getModelStats(project: string, win: WindowKey, provider?: string): Promise<ModelStat[]> {
@@ -408,8 +409,10 @@ export async function getModelStats(project: string, win: WindowKey, provider?: 
     `SELECT ${MODEL_EXPR} AS model,
             count(*)::int                       AS calls,
             coalesce(sum(cost_usd), 0)::float8     AS cost,
-            coalesce(sum(baseline_usd) FILTER (WHERE baseline_usd > 0), 0)::float8 AS baseline,
-            coalesce(sum(cost_usd) FILTER (WHERE baseline_usd > 0), 0)::float8     AS base_cost,
+            coalesce(sum(greatest(baseline_usd - cost_usd, 0)) FILTER (WHERE baseline_usd > 0), 0)::float8 AS saved,
+            max(modality)                          AS modality,
+            coalesce(sum((media_usage->>'seconds')::float8), 0)::float8 AS seconds,
+            coalesce(sum((media_usage->>'outputs')::float8), 0)::float8 AS outputs,
             coalesce(avg(latency_ms), 0)::float8   AS avg_latency,
             -- avg() skips NULLs, so this is the mean over streaming calls only;
             -- NULL (→ "—" in the UI) when none of them carried a TTFT.
@@ -442,9 +445,59 @@ export async function getModelStats(project: string, win: WindowKey, provider?: 
     avgLatencyMs: r.avg_latency,
     ttftMs: r.ttft_ms == null ? null : Number(r.ttft_ms),
     tokensPerSec: r.tokens_per_sec == null ? null : Number(r.tokens_per_sec),
-    savedUsd: Math.max(0, r.baseline - r.base_cost),
+    savedUsd: r.saved ?? 0,
     cacheHitRate: r.input_toks > 0 ? Number(r.cached_input ?? 0) / Number(r.input_toks) : 0,
+    modality: r.modality ?? null,
+    seconds: Number(r.seconds ?? 0),
+    outputs: Number(r.outputs ?? 0),
   }));
+}
+
+// ── price-table drift (registry price vs provider-reported actual) ──────────
+// est_cost_usd is what ai-lcr's price table PREDICTED a call would cost; when a
+// provider reports its own bill, cost_usd ≠ est_cost_usd is a stale or
+// mis-entered registry price (a USD-vs-cents adapter slip is exactly 100×).
+// Rows where the cost was estimated have cost == est by construction, so the
+// `cost_usd <> est_cost_usd` filter keeps only provider-reported evidence.
+// Cheapest-first routing is only as good as the table — this is its smoke alarm.
+export interface DriftRow {
+  model: string;
+  provider: string;
+  calls: number;
+  costUsd: number; // what providers actually billed
+  estUsd: number; // what the price table predicted
+  ratio: number; // cost / est — 1.0 = table is accurate
+}
+
+const DRIFT_THRESHOLD = 0.2; // surface groups off by more than ±20%
+
+export async function getPriceDrift(project: string, win: WindowKey, provider?: string): Promise<DriftRow[]> {
+  const { clause, params } = scope(project, provider);
+  const { rows } = await getPool().query(
+    `SELECT ${MODEL_EXPR} AS model,
+            ${PROVIDER_EXPR} AS provider,
+            count(*)::int            AS calls,
+            sum(cost_usd)::float8     AS cost,
+            sum(est_cost_usd)::float8 AS est
+       FROM lcr_calls
+      WHERE ${since(win)}${clause}
+        AND ok AND est_cost_usd IS NOT NULL AND est_cost_usd > 0
+        AND cost_usd > 0 AND cost_usd <> est_cost_usd
+      GROUP BY 1, 2`,
+    params,
+  );
+  return rows
+    .map((r): DriftRow => ({
+      model: r.model,
+      provider: r.provider,
+      calls: r.calls,
+      costUsd: r.cost,
+      estUsd: r.est,
+      ratio: r.est > 0 ? r.cost / r.est : 0,
+    }))
+    .filter((r) => Math.abs(r.ratio - 1) > DRIFT_THRESHOLD)
+    .sort((a, b) => Math.abs(b.ratio - 1) - Math.abs(a.ratio - 1))
+    .slice(0, 20);
 }
 
 // Per-provider health over time — the provider analog of getProjectTimeline.

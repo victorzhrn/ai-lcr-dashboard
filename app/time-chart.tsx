@@ -18,7 +18,7 @@ function dayLabel(epochSec: number): string {
 // the trend lines become legible instead of just suggestive.
 export function TimeChart({ series, win }: { series: Bucket[]; win: WindowKey }) {
   const [hover, setHover] = useState<number | null>(null);
-  const saved = series.map((b) => Math.max(0, b.baseline - b.baseCost));
+  const saved = series.map((b) => b.saved);
   const cached = series.map((b) => b.cachedSaving);
   const spend = series.map((b) => b.cost);
   const max = Math.max(...saved, ...cached, ...spend, 1e-9);

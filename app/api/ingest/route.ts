@@ -28,6 +28,12 @@ type CallRecord = {
   baselineUsd?: number;
   cachedSavingUsd?: number; // prompt-cache discount on this call; absent on older ai-lcr / no-cache calls
   cachedInputTokens?: number; // input tokens read from cache; present whenever the provider reports caching
+  // ai-lcr 0.6 provenance (all optional — older clients simply omit them)
+  modality?: string; // 'image' | 'video'; text records leave it unset
+  usage?: { seconds?: number; outputs?: number; megapixels?: number };
+  baselineKind?: string; // 'official' | 'priciest-route' | 'last-leg'
+  officialUsd?: number; // official first-party price for this call's usage
+  estCostUsd?: number; // price-table prediction; vs costUsd = drift on reported rows
 };
 
 function authorized(req: Request): boolean {
@@ -68,8 +74,9 @@ export async function POST(req: Request) {
     const pool = getPool();
     await pool.query(
       `INSERT INTO lcr_calls
-         (id, project, model, winner, ok, failed_over, latency_ms, ttft_ms, input_tokens, output_tokens, cost_usd, baseline_usd, cached_saving_usd, cached_input_tokens, attempts)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
+         (id, project, model, winner, ok, failed_over, latency_ms, ttft_ms, input_tokens, output_tokens, cost_usd, baseline_usd, cached_saving_usd, cached_input_tokens, attempts,
+          modality, media_usage, baseline_kind, official_usd, est_cost_usd)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20)
        ON CONFLICT (id) DO NOTHING`,
       [
         r.id,
@@ -89,6 +96,13 @@ export async function POST(req: Request) {
         r.cachedSavingUsd ?? 0,
         r.cachedInputTokens ?? 0,
         JSON.stringify(r.attempts ?? []),
+        // 0.6 provenance — null (not 0/"") when absent, so "unknown" never
+        // masquerades as a real value (est_cost_usd 0 would read as "free").
+        typeof r.modality === "string" ? r.modality : null,
+        r.usage && typeof r.usage === "object" ? JSON.stringify(r.usage) : null,
+        typeof r.baselineKind === "string" ? r.baselineKind : null,
+        typeof r.officialUsd === "number" ? r.officialUsd : null,
+        typeof r.estCostUsd === "number" ? r.estCostUsd : null,
       ],
     );
     return NextResponse.json({ ok: true });

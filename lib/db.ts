@@ -90,5 +90,21 @@ ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS cached_saving_usd numeric(12,6) N
 -- — independent of pricing — so it powers a cache HIT-RATE signal even on legs
 -- with no cacheRead rate (where cached_saving_usd is 0). Older rows stay 0.
 ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS cached_input_tokens integer NOT NULL DEFAULT 0;
+-- ai-lcr 0.6 provenance fields. All NULLABLE on purpose — absence means "the
+-- record predates 0.6 or isn't a media call", which queries must distinguish
+-- from a real 0 (est_cost_usd = 0 would read as free; NULL reads as unknown).
+--   modality:      'image' | 'video' (media records; text rows stay NULL)
+--   media_usage:   typed usage behind the bill: { seconds?, outputs?, megapixels? }
+--   baseline_kind: how baseline_usd was derived — 'official' (model maker's
+--                  first-party price), 'priciest-route' (self-referential
+--                  fallback), 'last-leg' (text router's fallback-leg price)
+--   official_usd:  the official first-party price for this call's usage
+--   est_cost_usd:  what the price table PREDICTED; on provider-reported rows,
+--                  cost_usd vs est_cost_usd is the price-table drift signal
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS modality text;
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS media_usage jsonb;
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS baseline_kind text;
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS official_usd numeric(12,6);
+ALTER TABLE lcr_calls ADD COLUMN IF NOT EXISTS est_cost_usd numeric(12,6);
 CREATE INDEX IF NOT EXISTS lcr_calls_project_ts ON lcr_calls (project, ts DESC);
 `;

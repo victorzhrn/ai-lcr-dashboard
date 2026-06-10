@@ -9,6 +9,7 @@ import {
   getModelStats,
   getProviderHealth,
   getFailoverEvents,
+  getPriceDrift,
   asWindow,
   projectStatus,
   WINDOWS,
@@ -22,6 +23,7 @@ import {
   type ProviderHealthRow,
   type ProjectStatus,
   type CallRow,
+  type DriftRow,
 } from "@/lib/queries";
 import { ensureSchema } from "@/lib/db";
 import { domainFor, monogram } from "@/lib/projects";
@@ -232,7 +234,7 @@ function DeltaSub({ d }: { d: ReturnType<typeof delta> }) {
 
 // ── stat row ────────────────────────────────────────────────────────────────
 function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucket[] }) {
-  const saved = series.map((b) => Math.max(0, b.baseline - b.baseCost));
+  const saved = series.map((b) => b.saved);
   const spend = series.map((b) => b.cost);
   const calls = series.map((b) => b.calls);
   // Tone only when a number needs attention — healthy values stay neutral.
@@ -257,7 +259,7 @@ function StatRow({ m, prev, series }: { m: Metrics; prev: Metrics; series: Bucke
         sub={<DeltaSub d={delta(m.savedUsd, prev.savedUsd)} />}
         spark={saved}
         sparkTone="var(--green)"
-        hint="What routing saved: each call's cost vs. what the always-on fallback (the list-price provider you'd use without routing) would have charged for the same tokens. When the fallback itself served, this is 0 — no routing happened."
+        hint="What routing saved, per call and clamped at 0: cost vs. the call's baseline for the SAME usage. Text calls baseline against the always-on fallback leg's list price; image/video calls against the model maker's official first-party price (or the priciest configured route when no official price is known). When the baseline itself served, this is 0 — no routing happened."
       />
       <Stat
         label="Save %"
@@ -545,6 +547,10 @@ interface BreakdownRow {
   tokensPerSec: number | null;
   savedUsd: number;
   cacheHitRate?: number; // share of input read from cache; omitted on the provider axis
+  modality?: string | null; // 'image' | 'video' (media models); chip next to the name
+  // Per-unit economics from typed usage: "$0.08/s" for video, "$0.004/img" for
+  // image. null when the rows carried no usage (text models, pre-0.6 records).
+  unitCost?: { label: string; usd: number } | null;
 }
 
 function BreakdownTable({
@@ -560,6 +566,7 @@ function BreakdownTable({
 }) {
   const max = Math.max(...rows.map((r) => r.share), 1e-9);
   const showCache = rows.some((r) => r.cacheHitRate !== undefined);
+  const showUnit = rows.some((r) => r.unitCost);
   return (
     <div className="panel">
       <div className="p-head">
@@ -574,6 +581,9 @@ function BreakdownTable({
             <th className="r">calls</th>
             <th className="r">tokens</th>
             <th className="r">you/call</th>
+            {showUnit && (
+              <th className="r" title="Per-unit economics from measured usage: $ per second of video, $ per image. — = no usage data (text models, or records from ai-lcr <0.6).">$/unit</th>
+            )}
             <th className="r">spent</th>
             <th className="r">latency</th>
             <th className="r" title="Time to first token — streaming calls only. — = no streaming sample in this window.">ttft</th>
@@ -587,7 +597,10 @@ function BreakdownTable({
         <tbody>
           {rows.map((r) => (
             <tr key={r.key}>
-              <td>{r.key}</td>
+              <td>
+                {r.key}
+                {r.modality && <span className={`mchip m-${r.modality}`}>{r.modality}</span>}
+              </td>
               <td className="gauge-col">
                 <span className="gauge">
                   <span className="gfill" style={{ width: `${(r.share / max) * 100}%` }} />
@@ -597,6 +610,9 @@ function BreakdownTable({
               <td className="r">{compact(r.calls)}</td>
               <td className="r dim">{compact(r.tokens)}</td>
               <td className="r">{money(r.costPerCall)}</td>
+              {showUnit && (
+                <td className="r dim">{r.unitCost ? `${money(r.unitCost.usd)}${r.unitCost.label}` : "—"}</td>
+              )}
               <td className="r">{money(r.spentUsd)}</td>
               <td className="r dim">{ms(r.avgLatencyMs)}</td>
               <td className="r dim">{r.ttftMs == null ? "—" : ms(r.ttftMs)}</td>
@@ -615,6 +631,14 @@ function BreakdownTable({
   );
 }
 
+// Per-unit economics from typed usage: video models read $/second (the axis
+// their pricing varies on), image models $/image. Text models carry no usage.
+function unitCostOf(m: ModelStat): { label: string; usd: number } | null {
+  if (m.modality === "video" && m.seconds > 0) return { label: "/s", usd: m.spentUsd / m.seconds };
+  if (m.modality === "image" && m.outputs > 0) return { label: "/img", usd: m.spentUsd / m.outputs };
+  return null;
+}
+
 const modelRows = (s: ModelStat[]): BreakdownRow[] =>
   s.map((m) => ({
     key: m.model,
@@ -628,7 +652,51 @@ const modelRows = (s: ModelStat[]): BreakdownRow[] =>
     tokensPerSec: m.tokensPerSec,
     savedUsd: m.savedUsd,
     cacheHitRate: m.cacheHitRate,
+    modality: m.modality,
+    unitCost: unitCostOf(m),
   }));
+
+// ── price-table drift (the cheapest-first smoke alarm) ──────────────────────
+// Shown only when provider-reported bills disagree with the configured price
+// table by >±20% — silence means the table is trustworthy. A ~100× ratio is
+// almost always a USD-vs-cents unit slip in an adapter or registry entry.
+function PriceDriftPanel({ rows }: { rows: DriftRow[] }) {
+  if (rows.length === 0) return null;
+  return (
+    <div className="panel">
+      <div className="p-head">
+        <span className="p-title">Price drift · table vs actual</span>
+        <span className="legend p1">provider-reported bills disagree with the configured prices — fix the registry</span>
+      </div>
+      <table className="grid">
+        <thead>
+          <tr>
+            <th>model</th>
+            <th>provider</th>
+            <th className="r">calls</th>
+            <th className="r" title="What the price table predicted these calls would cost.">predicted</th>
+            <th className="r" title="What providers actually billed.">actual</th>
+            <th className="r" title="actual ÷ predicted. 1.0 = accurate. ~100× usually means a USD-vs-cents slip.">ratio</th>
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={`${r.model}@${r.provider}`}>
+              <td>{r.model}</td>
+              <td>
+                <ProviderIcon provider={r.provider} size={14} /> {r.provider}
+              </td>
+              <td className="r">{compact(r.calls)}</td>
+              <td className="r dim">{money(r.estUsd)}</td>
+              <td className="r">{money(r.costUsd)}</td>
+              <td className={`r ${Math.abs(r.ratio - 1) > 1 ? "bad" : "warn"}`}>{r.ratio.toFixed(2)}×</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 // ── failover events log ─────────────────────────────────────────────────────
 function EventsLog({
@@ -746,18 +814,20 @@ export default async function Page({
     if (metrics.calls === 0 && fleet.length === 0 && projects.length === 0) {
       body = <EmptyNotice />;
     } else if (project === "all") {
-      const [timeline, provStats, provHealth, models, events] = await Promise.all([
+      const [timeline, provStats, provHealth, models, events, drift] = await Promise.all([
         getProjectTimeline(win, provider),
         getProviderStats("all", win, provider),
         getProviderHealth("all", win, 8000, provider),
         getModelStats("all", win, provider),
         getFailoverEvents("all", win, 40, provider),
+        getPriceDrift("all", win, provider),
       ]);
       const provs = mergeProviders(provStats, provHealth);
       body = (
         <>
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
+          <PriceDriftPanel rows={drift} />
           <FleetTable fleet={fleet} timeline={timeline} win={win} provider={provider} />
           {provs.length > 0 && <ProviderTable rows={provs} project="all" win={win} activeProvider={provider} />}
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
@@ -765,18 +835,20 @@ export default async function Page({
         </>
       );
     } else {
-      const [provStats, provHealth, models, events] = await Promise.all([
+      const [provStats, provHealth, models, events, drift] = await Promise.all([
         getProviderStats(project, win, provider),
         getProviderHealth(project, win, 8000, provider),
         getModelStats(project, win, provider),
         getFailoverEvents(project, win, 40, provider),
+        getPriceDrift(project, win, provider),
       ]);
       const provs = mergeProviders(provStats, provHealth);
       body = (
         <>
           <StatRow m={metrics} prev={prev} series={series} />
           <TimeChart series={series} win={win} />
-          <ProviderTable rows={provs} note="list/call & vetted — coming in P1" project={project} win={win} activeProvider={provider} />
+          <PriceDriftPanel rows={drift} />
+          <ProviderTable rows={provs} project={project} win={win} activeProvider={provider} />
           <BreakdownTable title="Models · what ran" label="model" rows={modelRows(models)} />
           <EventsLog
             events={events}

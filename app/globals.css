@@ -203,6 +203,11 @@ table.grid td.cachev { color: var(--cache); }
 .hstrip .seg { flex: 1; min-width: 1px; }
 
 /* ── tables ── */
+/* Scroll container: long tables (the Models table can run 60+ rows) cap at
+   ~12 visible rows and scroll internally, so the page keeps its shape and the
+   sections below stay reachable. The header sticks while scrolling. */
+.tscroll { overflow: auto; max-height: 408px; }
+.tscroll table.grid thead th { position: sticky; top: 0; background: var(--panel); z-index: 2; }
 table.grid { width: 100%; border-collapse: collapse; font-size: 12.5px; }
 table.grid th { text-align: left; color: var(--dim); font-weight: 500; font-size: 10.5px; text-transform: uppercase; letter-spacing: .06em; padding: 4px 10px 8px; border-bottom: 1px solid var(--border); font-family: var(--mono); }
 table.grid th.r { text-align: right; }
